@@ -77,6 +77,7 @@ BLOCK_TAGS = {
     "comment": "endcomment",
     "case": "endcase",
     "raw": "endraw",
+    "tablerow": "endtablerow",
 }
 
 END_TAGS = {closer: opener for opener, closer in BLOCK_TAGS.items()}
@@ -85,16 +86,25 @@ END_TAGS = {closer: opener for opener, closer in BLOCK_TAGS.items()}
 BRANCH_TAGS = {"elsif", "else", "when"}
 
 # Simple (non-block) tags.
-SIMPLE_TAGS = {"assign"}
+SIMPLE_TAGS = {"assign", "cycle", "increment", "decrement"}
 
-# Rock-only block tags: entity commands and server-side commands. These
-# render only on a real Rock server (remote mode) with the command
-# enabled on the endpoint.
-REMOTE_ONLY_BLOCK_TAGS = {
+# Entity command tags: run locally against the bundled sample database,
+# and against the real database on a connected Rock server.
+ENTITY_BLOCK_TAGS = {
     "person", "business", "group", "groupmember", "campus", "definedvalue",
-    "contentchannelitem", "entity", "sql", "execute", "webrequest",
-    "workflowactivate", "cache", "javascript", "stylesheet",
-    "interactionwrite", "interactioncontentchannelitemwrite",
+    "contentchannelitem",
 }
+
+# Rock-only block tags: server-side commands that render only on a real
+# Rock server (remote mode) with the command enabled on the endpoint.
+REMOTE_ONLY_BLOCK_TAGS = {
+    "entity", "sql", "execute", "webrequest", "workflowactivate", "cache",
+    "javascript", "stylesheet", "interactionwrite",
+    "interactioncontentchannelitemwrite",
+}
+
+# Shortcodes supported by the local engine.
+BLOCK_SHORTCODES = {"accordion", "alert", "panel", "kpis"}
+INLINE_SHORTCODES = {"button", "youtube", "vimeo"}
 
 ALL_TAGS = set(BLOCK_TAGS) | set(END_TAGS) | BRANCH_TAGS | SIMPLE_TAGS

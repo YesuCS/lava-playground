@@ -166,8 +166,38 @@ export const LESSONS: Lesson[] = [
     ],
   },
   {
+    id: 'entity-commands',
+    title: '12. Entity commands',
+    teach:
+      "Entity commands query data: {% person where:'LastName == \"Houston\"' %} sets a person collection you " +
+      "can loop over, with sort:'prop desc', limit:'n', id:'n', and iterator:'name' parameters. Operators: " +
+      '==, !=, >, <, >=, <=, ^= (starts with), *= (contains), joined with && and ||. Locally these query the ' +
+      'bundled sample database; on a real Rock server they query your actual data.\n\n' +
+      'Goal: list everyone at campus 1 (CampusId == 1). You should see Sam and Liz.',
+    starter: "{% person %}\n{% for p in person %}{{ p.NickName }} {% endfor %}\n{% endperson %}\n",
+    checks: [
+      { type: 'template-includes', value: 'where:', hint: "Add where:'CampusId == 1' to the person command." },
+      { type: 'output-includes', value: 'Liz', hint: 'Liz should be in the results.' },
+    ],
+  },
+  {
+    id: 'shortcodes',
+    title: '13. Shortcodes',
+    teach:
+      'Shortcodes are Lava macros with {[ ]} braces that emit formatted HTML: ' +
+      "{[ alert type:'warning' ]}content{[ endalert ]}, {[ panel title:'x' ]}, {[ button text:'Go' link:'/x' ]}, " +
+      'plus accordion and kpis with [[ item ]] child blocks.\n\n' +
+      'Goal: wrap a message in an alert shortcode with type success.',
+    starter: 'Great job!\n',
+    checks: [
+      { type: 'template-includes', value: '{[ alert', hint: 'Open with {[ alert type:\'success\' ]}.' },
+      { type: 'template-includes', value: 'endalert', hint: 'Close with {[ endalert ]}.' },
+      { type: 'output-includes', value: 'alert-success', hint: 'The rendered HTML should have the alert-success class.' },
+    ],
+  },
+  {
     id: 'capstone',
-    title: '12. Capstone',
+    title: '14. Capstone',
     teach:
       'Put it together: assign stores a value ({% assign x = ... %}), capture stores rendered output, and ' +
       'everything you have learned composes.\n\n' +

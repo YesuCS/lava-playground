@@ -8,6 +8,7 @@
 
   <ItemGroup>
     <Content Update="SampleData\sample-context.json" CopyToOutputDirectory="PreserveNewest" />
+    <Content Update="SampleData\sample-entities.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

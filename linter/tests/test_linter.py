@@ -154,3 +154,46 @@ def test_new_filters_are_known():
 
 def test_assign_expression_filters_are_checked():
     assert "unknown-filter" in codes("{% assign x = 'a' | Upcaze %}")
+
+
+def test_entity_command_is_clean():
+    assert lint("{% person where:'Age > 18' %}{% for p in person %}{{ p.NickName }}{% endfor %}{% endperson %}") == []
+
+
+def test_entity_command_left_open():
+    assert "unclosed-block" in codes("{% campus %}")
+
+
+def test_cycle_increment_are_known():
+    assert lint("{% cycle 'a', 'b' %}{% increment i %}{% decrement j %}") == []
+
+
+def test_tablerow_structure():
+    assert lint("{% tablerow c in Campuses cols:2 %}{{ c.Name }}{% endtablerow %}") == []
+    assert "unclosed-block" in codes("{% tablerow c in Campuses %}")
+
+
+def test_shortcode_clean():
+    assert lint("{[ alert type:'info' ]}Hi{[ endalert ]}{[ button text:'Go' ]}") == []
+
+
+def test_unknown_shortcode_with_suggestion():
+    issues = lint("{[ allert ]}x{[ endallert ]}")
+    assert issues[0].code == "unknown-shortcode"
+    assert "alert" in issues[0].suggestion
+
+
+def test_unclosed_shortcode_block():
+    assert "unclosed-shortcode-block" in codes("{[ panel title:'x' ]}body")
+
+
+def test_unmatched_end_shortcode():
+    assert "unmatched-end-shortcode" in codes("{[ endaccordion ]}")
+
+
+def test_unclosed_shortcode_marker():
+    assert "unclosed-shortcode" in codes("text {[ alert")
+
+
+def test_shortcode_inside_raw_ignored():
+    assert lint("{% raw %}{[ bogus ]}{% endraw %}") == []

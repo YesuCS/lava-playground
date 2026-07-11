@@ -266,6 +266,21 @@ public partial class LavaFilterRegistry
             "{{ 'a1b2' | RegExReplace:'\\d','-' }} → a-b-",
             (input, args) => Regex.Replace(Str(input), Str(Arg(args, 0)), Str(Arg(args, 1))));
 
+        Register("WithFallback", "Logic", "Appends/prepends text when the input has a value; otherwise returns the fallback.",
+            "{{ Person.NickName | WithFallback:'Hi, ',' friend','prepend' }}",
+            (input, args) =>
+            {
+                var successText = Str(Arg(args, 0));
+                var fallbackText = Str(Arg(args, 1));
+                var order = Str(Arg(args, 2) ?? "prepend");
+                var s = Str(input);
+                if (s.Length == 0)
+                {
+                    return fallbackText;
+                }
+                return order.Equals("append", StringComparison.OrdinalIgnoreCase) ? s + successText : successText + s;
+            });
+
         Register("Default", "Logic", "Returns a fallback when the input is null, false, or an empty string.",
             "{{ Person.MiddleName | Default:'(none)' }}",
             (input, args) => input == null || input as bool? == false || (input is string s2 && s2.Length == 0)

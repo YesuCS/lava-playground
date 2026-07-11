@@ -38,11 +38,30 @@ var contextJson = """
 
 var baseContext = JsonObjectConverter.ToDictionary(JsonDocument.Parse(contextJson).RootElement);
 
+var entityJson = """
+{
+  "person": [
+    { "Id": 1, "NickName": "Sam", "LastName": "Houston", "Age": 33, "CampusId": 1 },
+    { "Id": 2, "NickName": "Liz", "LastName": "Austin", "Age": 28, "CampusId": 1 },
+    { "Id": 3, "NickName": "Deb", "LastName": "Crockett", "Age": 45, "CampusId": 2 }
+  ],
+  "campus": [
+    { "Id": 1, "Name": "The Loop", "IsActive": true },
+    { "Id": 2, "Name": "Cypress", "IsActive": false }
+  ]
+}
+""";
+var entityData = JsonObjectConverter.ToDictionary(JsonDocument.Parse(entityJson).RootElement)
+    .ToDictionary(
+        kv => kv.Key,
+        kv => (kv.Value as List<object?>) ?? new List<object?>(),
+        StringComparer.OrdinalIgnoreCase);
+
 void Check(string name, string template, string expected)
 {
     try
     {
-        var output = LavaTemplate.Parse(template).Render(new RenderContext(baseContext, filters));
+        var output = LavaTemplate.Parse(template).Render(new RenderContext(baseContext, filters, entityData));
         if (output == expected)
         {
             passed++;
@@ -60,11 +79,33 @@ void Check(string name, string template, string expected)
     }
 }
 
+void CheckContains(string name, string template, string expectedFragment)
+{
+    try
+    {
+        var output = LavaTemplate.Parse(template).Render(new RenderContext(baseContext, filters, entityData));
+        if (output.Contains(expectedFragment))
+        {
+            passed++;
+        }
+        else
+        {
+            failed++;
+            failures.Add($"{name}: expected output to contain \"{expectedFragment}\" but got \"{output}\"");
+        }
+    }
+    catch (Exception ex)
+    {
+        failed++;
+        failures.Add($"{name}: threw {ex.GetType().Name}: {ex.Message}");
+    }
+}
+
 void CheckError(string name, string template, string expectedFragment)
 {
     try
     {
-        LavaTemplate.Parse(template).Render(new RenderContext(baseContext, filters));
+        LavaTemplate.Parse(template).Render(new RenderContext(baseContext, filters, entityData));
         failed++;
         failures.Add($"{name}: expected a LavaException containing \"{expectedFragment}\" but nothing was thrown");
     }
@@ -290,6 +331,77 @@ CheckError("missing endraw", "{% raw %}oops", "endraw");
 Check("for over dictionary",
     "{% assign d = '' | AddToDictionary:'x',1 %}{% for entry in d %}{{ entry.Key }}:{{ entry.Value }}{% endfor %}",
     "x:1");
+
+// ---------------- Entity commands ----------------
+Check("entity command basic",
+    "{% person %}{{ person | Size }}{% endperson %}", "3");
+Check("entity where equality",
+    "{% person where:'LastName == \"Houston\"' %}{% for p in person %}{{ p.NickName }}{% endfor %}{% endperson %}", "Sam");
+Check("entity where and",
+    "{% person where:'CampusId == 1 && Age > 30' %}{{ person | Size }}{% endperson %}", "1");
+Check("entity where or",
+    "{% person where:'Age > 40 || NickName == \"Liz\"' %}{{ person | Size }}{% endperson %}", "2");
+Check("entity where starts-with",
+    "{% person where:'LastName ^= \"Hou\"' %}{{ person | Size }}{% endperson %}", "1");
+Check("entity where contains",
+    "{% person where:'LastName *= \"usti\"' %}{% for p in person %}{{ p.NickName }}{% endfor %}{% endperson %}", "Liz");
+Check("entity sort desc + limit",
+    "{% person sort:'Age desc' limit:'1' %}{% for p in person %}{{ p.NickName }}{% endfor %}{% endperson %}", "Deb");
+Check("entity id returns single",
+    "{% person id:'2' %}{{ person.NickName }}{% endperson %}", "Liz");
+Check("entity iterator rename",
+    "{% person where:'Age < 30' iterator:'youngins' %}{{ youngins | Size }}{% endperson %}", "1");
+Check("second entity type",
+    "{% campus where:'IsActive == true' %}{% for c in campus %}{{ c.Name }}{% endfor %}{% endcampus %}", "The Loop");
+Check("entity variable scoped to block",
+    "{% campus limit:'1' %}{% endcampus %}[{{ campus }}]", "[]");
+CheckError("unknown entity data", "{% definedvalue %}x{% enddefinedvalue %}", "No sample data");
+CheckError("bad where clause", "{% person where:'LastName ~ 5' %}{% endperson %}", "operator");
+
+// ---------------- Shortcodes ----------------
+Check("alert shortcode",
+    "{[ alert type:'warning' ]}Watch out{[ endalert ]}",
+    "<div class=\"alert alert-warning\">Watch out</div>");
+Check("alert renders inner lava",
+    "{[ alert ]}Hi {{ Person.NickName }}{[ endalert ]}",
+    "<div class=\"alert alert-info\">Hi Sam</div>");
+Check("panel with title",
+    "{[ panel title:'Notes' ]}Body{[ endpanel ]}",
+    "<div class=\"panel panel-default\"><div class=\"panel-heading\"><h3 class=\"panel-title\">Notes</h3></div><div class=\"panel-body\">Body</div></div>");
+Check("button inline",
+    "{[ button text:'Go' link:'/next' type:'success' ]}",
+    "<a href=\"/next\" class=\"btn btn-success\">Go</a>");
+Check("button lava in params",
+    "{[ button text:'{{ Person.NickName }}' ]}",
+    "<a href=\"#\" class=\"btn btn-primary\">Sam</a>");
+Check("youtube embed contains id",
+    "{% assign html = '' %}{[ youtube id:'abc123' ]}",
+    "<div class=\"embed-responsive embed-responsive-16by9\"><iframe width=\"100%\" src=\"https://www.youtube.com/embed/abc123\" frameborder=\"0\" allowfullscreen></iframe></div>");
+CheckError("unknown shortcode", "{[ sparkle ]}", "Unknown shortcode");
+CheckError("unclosed shortcode marker", "{[ alert", "Unclosed shortcode");
+CheckError("missing end shortcode", "{[ alert ]}oops", "endalert");
+
+var accordion = "{[ accordion ]}[[ item title:'One' ]]First[[ enditem ]][[ item title:'Two' ]]Second[[ enditem ]]{[ endaccordion ]}";
+CheckContains("accordion has both items", accordion, "One");
+CheckContains("accordion second item", accordion, "Second");
+CheckContains("kpis renders values",
+    "{[ kpis ]}[[ item value:'42' label:'Groups' ]][[ enditem ]]{[ endkpis ]}", "42");
+
+// ---------------- cycle / increment / decrement / tablerow ----------------
+Check("cycle alternates",
+    "{% for c in Campuses %}{% cycle 'odd', 'even' %}{% endfor %}", "oddevenodd");
+Check("named cycle groups are independent",
+    "{% cycle 'g1': 'a', 'b' %}{% cycle 'g2': 'a', 'b' %}{% cycle 'g1': 'a', 'b' %}", "aab");
+Check("increment", "{% increment i %}{% increment i %}{% increment i %}", "012");
+Check("decrement", "{% decrement d %}{% decrement d %}", "-1-2");
+Check("tablerow",
+    "{% tablerow c in Campuses cols:2 %}{{ c.Name }}{% endtablerow %}",
+    "<tr class=\"row1\"><td class=\"col1\">The Loop</td><td class=\"col2\">Cypress</td></tr><tr class=\"row2\"><td class=\"col1\">Downtown</td></tr>");
+
+// ---------------- WithFallback + comment semantics ----------------
+Check("WithFallback with value", "{{ Person.NickName | WithFallback:'Hi ',' friend' }}", "Hi Sam");
+Check("WithFallback empty", "{{ Person.MiddleName | WithFallback:'Hi ','friend' }}", "friend");
+Check("comment content is not parsed", "a{% comment %}{{ | totally }} {% bogus %}{% endcomment %}b", "ab");
 
 // ---------------- Report ----------------
 Console.WriteLine($"\n{passed} passed, {failed} failed");

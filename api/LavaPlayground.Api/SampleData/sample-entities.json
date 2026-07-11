@@ -1,0 +1,46 @@
+{
+  "person": [
+    { "Id": 1, "NickName": "Sam", "FirstName": "Samuel", "LastName": "Houston", "FullName": "Sam Houston", "Gender": "Male", "Age": 33, "Email": "sam.houston@example.com", "ConnectionStatus": "Member", "CampusId": 1, "IsBaptized": true },
+    { "Id": 2, "NickName": "Liz", "FirstName": "Elizabeth", "LastName": "Austin", "FullName": "Liz Austin", "Gender": "Female", "Age": 28, "Email": "liz.austin@example.com", "ConnectionStatus": "Member", "CampusId": 1, "IsBaptized": true },
+    { "Id": 3, "NickName": "Deb", "FirstName": "Deborah", "LastName": "Crockett", "FullName": "Deb Crockett", "Gender": "Female", "Age": 45, "Email": "deb.crockett@example.com", "ConnectionStatus": "Attendee", "CampusId": 2, "IsBaptized": false },
+    { "Id": 4, "NickName": "Will", "FirstName": "William", "LastName": "Travis", "FullName": "Will Travis", "Gender": "Male", "Age": 52, "Email": "will.travis@example.com", "ConnectionStatus": "Member", "CampusId": 2, "IsBaptized": true },
+    { "Id": 5, "NickName": "Manny", "FirstName": "Emmanuel", "LastName": "Seguin", "FullName": "Manny Seguin", "Gender": "Male", "Age": 24, "Email": "manny.seguin@example.com", "ConnectionStatus": "Visitor", "CampusId": 3, "IsBaptized": false },
+    { "Id": 6, "NickName": "Rosa", "FirstName": "Rosa", "LastName": "Gonzales", "FullName": "Rosa Gonzales", "Gender": "Female", "Age": 61, "Email": "rosa.gonzales@example.com", "ConnectionStatus": "Member", "CampusId": 4, "IsBaptized": true }
+  ],
+  "business": [
+    { "Id": 100, "LastName": "Space City Coffee", "Email": "orders@example.com", "CampusId": 1 },
+    { "Id": 101, "LastName": "Bayou Print Co", "Email": "hello@example.com", "CampusId": 3 }
+  ],
+  "group": [
+    { "Id": 10, "Name": "Young Pros Life Bible Study", "GroupTypeId": 25, "CampusId": 1, "IsActive": true, "MemberCount": 14 },
+    { "Id": 11, "Name": "Serve Team: Check-In", "GroupTypeId": 30, "CampusId": 1, "IsActive": true, "MemberCount": 8 },
+    { "Id": 12, "Name": "Worship Choir", "GroupTypeId": 30, "CampusId": 1, "IsActive": true, "MemberCount": 120 },
+    { "Id": 13, "Name": "Cypress Students", "GroupTypeId": 25, "CampusId": 2, "IsActive": true, "MemberCount": 45 },
+    { "Id": 14, "Name": "Legacy Builders", "GroupTypeId": 25, "CampusId": 4, "IsActive": false, "MemberCount": 22 }
+  ],
+  "groupmember": [
+    { "Id": 500, "GroupId": 10, "PersonId": 1, "GroupRole": "Leader", "Status": "Active" },
+    { "Id": 501, "GroupId": 10, "PersonId": 2, "GroupRole": "Member", "Status": "Active" },
+    { "Id": 502, "GroupId": 11, "PersonId": 1, "GroupRole": "Member", "Status": "Active" },
+    { "Id": 503, "GroupId": 12, "PersonId": 6, "GroupRole": "Member", "Status": "Active" },
+    { "Id": 504, "GroupId": 13, "PersonId": 3, "GroupRole": "Leader", "Status": "Inactive" }
+  ],
+  "campus": [
+    { "Id": 1, "Name": "The Loop", "ShortCode": "LOOP", "City": "Houston", "IsActive": true, "Attendance": 3200 },
+    { "Id": 2, "Name": "Cypress", "ShortCode": "CYP", "City": "Cypress", "IsActive": true, "Attendance": 1100 },
+    { "Id": 3, "Name": "Downtown", "ShortCode": "DT", "City": "Houston", "IsActive": true, "Attendance": 650 },
+    { "Id": 4, "Name": "Sienna", "ShortCode": "SNA", "City": "Missouri City", "IsActive": true, "Attendance": 800 }
+  ],
+  "definedvalue": [
+    { "Id": 200, "DefinedTypeId": 13, "Value": "Member", "Description": "An active member", "Order": 0 },
+    { "Id": 201, "DefinedTypeId": 13, "Value": "Attendee", "Description": "Attends regularly", "Order": 1 },
+    { "Id": 202, "DefinedTypeId": 13, "Value": "Visitor", "Description": "First-time or returning guest", "Order": 2 },
+    { "Id": 210, "DefinedTypeId": 30, "Value": "Sunday 9:15", "Description": "First service", "Order": 0 },
+    { "Id": 211, "DefinedTypeId": 30, "Value": "Sunday 11:00", "Description": "Second service", "Order": 1 }
+  ],
+  "contentchannelitem": [
+    { "Id": 300, "ContentChannelId": 5, "Title": "Rooted Week 1: Planted", "Status": "Approved", "StartDateTime": "2026-06-07", "Content": "<p>Series kickoff.</p>" },
+    { "Id": 301, "ContentChannelId": 5, "Title": "Rooted Week 2: Watered", "Status": "Approved", "StartDateTime": "2026-06-14", "Content": "<p>Growth takes patience.</p>" },
+    { "Id": 302, "ContentChannelId": 5, "Title": "Rooted Week 3: Pruned", "Status": "PendingApproval", "StartDateTime": "2026-06-21", "Content": "<p>Draft; not yet approved.</p>" }
+  ]
+}

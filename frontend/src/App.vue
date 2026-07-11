@@ -41,7 +41,16 @@ const DEFAULT_TEMPLATE = `{% comment %} Welcome to the Lava Playground! {% endco
 {% endfor %}
 </ul>
 
-<p>Total weekend attendance: {{ Campuses | Sum:'Attendance' | Format:'#,##0' }}</p>
+{[ kpis ]}
+[[ item value:"{{ Campuses | Sum:'Attendance' | Format:'#,##0' }}" label:'Weekend attendance' ]][[ enditem ]]
+[[ item value:"{{ Person.Groups | Size }}" label:"{{ Person.NickName | Possessive }} groups" ]][[ enditem ]]
+{[ endkpis ]}
+
+{% person where:'ConnectionStatus == "Member" && CampusId == 1' iterator:'members' %}
+<p>Members at The Loop (sample data):
+{% for m in members %}{{ m.NickName }}{% unless forloop.last %}, {% endunless %}{% endfor %}</p>
+{% endperson %}
+
 <p>Rendered {{ 'Now' | Date:'dddd, MMMM d, yyyy' }} in the year {{ 'Now' | Date:'yyyy' | NumberToRomanNumerals }}.</p>
 `
 
@@ -118,6 +127,7 @@ function setEngine(next: Engine) {
     return
   }
   engine.value = next
+  localStorage.setItem('engine', next)
   void runRender(template.value)
 }
 
@@ -176,6 +186,12 @@ onMounted(async () => {
   void runLint(template.value)
   try {
     rock.value = await rockStatus()
+    // Remote-first: when a Rock connection is live (e.g. auto-connected via
+    // ROCK_BASE_URL env vars), default to it unless the user chose local.
+    if (rock.value.connected && localStorage.getItem('engine') !== 'local') {
+      engine.value = 'rock'
+      void runRender(template.value)
+    }
     filters.value = await fetchFilters()
     contextJson.value = JSON.stringify(await fetchSampleContext(), null, 2)
   } catch {

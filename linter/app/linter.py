@@ -16,17 +16,21 @@ from dataclasses import dataclass, asdict
 
 from . import known
 from .known import (
+    BLOCK_SHORTCODES,
     BLOCK_TAGS,
     BRANCH_TAGS,
     END_TAGS,
+    ENTITY_BLOCK_TAGS,
+    INLINE_SHORTCODES,
     REMOTE_ONLY_BLOCK_TAGS,
     REMOTE_ONLY_FILTERS,
     SIMPLE_TAGS,
 )
 
-ALL_LOCAL_TAGS = set(BLOCK_TAGS) | set(END_TAGS) | BRANCH_TAGS | SIMPLE_TAGS
+ALL_LOCAL_TAGS = set(BLOCK_TAGS) | set(END_TAGS) | BRANCH_TAGS | SIMPLE_TAGS | ENTITY_BLOCK_TAGS
+ALL_SHORTCODES = BLOCK_SHORTCODES | INLINE_SHORTCODES
 
-MARKER_RE = re.compile(r"\{\{(.*?)\}\}|\{%(.*?)%\}", re.DOTALL)
+MARKER_RE = re.compile(r"\{\{(.*?)\}\}|\{%(.*?)%\}|\{\[(.*?)\]\}", re.DOTALL)
 OPEN_OUTPUT_RE = re.compile(r"\{\{")
 OPEN_TAG_RE = re.compile(r"\{%")
 
@@ -87,6 +91,7 @@ def _check_unclosed_markers(source: str) -> list[Issue]:
     for opener_re, closer, code in (
         (OPEN_OUTPUT_RE, "}}", "unclosed-output"),
         (OPEN_TAG_RE, "%}", "unclosed-tag"),
+        (re.compile(r"\{\["), "]}", "unclosed-shortcode"),
     ):
         for m in opener_re.finditer(source):
             if not inside_matched(m.start()):
@@ -110,11 +115,12 @@ def _branch_holder_tags(branch: str) -> tuple[str, ...]:
 def _check_structure(source: str) -> list[Issue]:
     issues: list[Issue] = []
     stack: list[_OpenBlock] = []
+    shortcode_stack: list[_OpenBlock] = []
     literal_depth = 0        # inside {% comment %} or {% raw %}
     literal_tag = ""         # which literal block we're inside
 
     for m in MARKER_RE.finditer(source):
-        output_content, tag_content = m.group(1), m.group(2)
+        output_content, tag_content, shortcode_content = m.group(1), m.group(2), m.group(3)
         line, col = _position(source, m.start())
 
         if literal_depth > 0:
@@ -131,6 +137,10 @@ def _check_structure(source: str) -> list[Issue]:
 
         if output_content is not None:
             issues.extend(_check_output(output_content, line, col))
+            continue
+
+        if shortcode_content is not None:
+            issues.extend(_check_shortcode(shortcode_content.strip(), line, col, shortcode_stack))
             continue
 
         content = tag_content.strip()
@@ -151,6 +161,10 @@ def _check_structure(source: str) -> list[Issue]:
                     line, col, "error", "capture-name",
                     "{% capture %} requires a variable name.",
                 ))
+            continue
+
+        if tag in ENTITY_BLOCK_TAGS:
+            stack.append(_OpenBlock(tag, line, col))
             continue
 
         if tag in REMOTE_ONLY_BLOCK_TAGS:
@@ -186,7 +200,7 @@ def _check_structure(source: str) -> list[Issue]:
             continue
 
         expected_opener = END_TAGS.get(tag)
-        if expected_opener is None and tag.startswith("end") and tag[3:] in REMOTE_ONLY_BLOCK_TAGS:
+        if expected_opener is None and tag.startswith("end") and tag[3:] in (REMOTE_ONLY_BLOCK_TAGS | ENTITY_BLOCK_TAGS):
             expected_opener = tag[3:]
         if expected_opener is not None:
             if not stack:
@@ -206,6 +220,9 @@ def _check_structure(source: str) -> list[Issue]:
                 stack.pop()
             else:
                 stack.pop()
+            continue
+
+        if tag in SIMPLE_TAGS and tag != "assign":
             continue
 
         if tag == "assign":
@@ -232,7 +249,45 @@ def _check_structure(source: str) -> list[Issue]:
             f"{{% {block.tag} %}} is never closed. Add {{% {closer} %}}.",
         ))
 
+    for block in shortcode_stack:
+        issues.append(Issue(
+            block.line, block.col, "error", "unclosed-shortcode-block",
+            f"{{[ {block.tag} ]}} is never closed. Add {{[ end{block.tag} ]}}.",
+        ))
+
     return issues
+
+
+def _check_shortcode(content: str, line: int, col: int, stack: list[_OpenBlock]) -> list[Issue]:
+    if not content:
+        return [Issue(line, col, "error", "empty-shortcode", "Empty shortcode: {[ ]} has no name.")]
+
+    name = content.split(" ")[0].lower()
+
+    if name.startswith("end"):
+        opener = name[3:]
+        if stack and stack[-1].tag == opener:
+            stack.pop()
+            return []
+        if opener in ALL_SHORTCODES:
+            return [Issue(
+                line, col, "error", "unmatched-end-shortcode",
+                f"{{[ {name} ]}} has no matching {{[ {opener} ]}}.",
+            )]
+        return [Issue(line, col, "error", "unknown-shortcode", f"Unknown shortcode {{[ {name} ]}}.")]
+
+    if name in BLOCK_SHORTCODES:
+        stack.append(_OpenBlock(name, line, col))
+        return []
+    if name in INLINE_SHORTCODES:
+        return []
+
+    match = difflib.get_close_matches(name, list(ALL_SHORTCODES), n=1)
+    return [Issue(
+        line, col, "error", "unknown-shortcode",
+        f"Unknown shortcode {{[ {name} ]}}.",
+        suggestion=f"Did you mean {{[ {match[0]} ]}}?" if match else None,
+    )]
 
 
 def _check_output(content: str, line: int, col: int) -> list[Issue]:

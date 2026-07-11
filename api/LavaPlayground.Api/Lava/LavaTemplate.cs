@@ -238,13 +238,9 @@ public class LavaTemplate
             {
                 var nextOutput = _source.IndexOf("{{", _pos, StringComparison.Ordinal);
                 var nextTag = _source.IndexOf("{%", _pos, StringComparison.Ordinal);
-                var next = (nextOutput, nextTag) switch
-                {
-                    (-1, -1) => -1,
-                    (-1, _) => nextTag,
-                    (_, -1) => nextOutput,
-                    _ => Math.Min(nextOutput, nextTag),
-                };
+                var nextShortcode = _source.IndexOf("{[", _pos, StringComparison.Ordinal);
+                var candidates = new[] { nextOutput, nextTag, nextShortcode }.Where(i => i != -1).ToArray();
+                var next = candidates.Length == 0 ? -1 : candidates.Min();
 
                 if (next == -1)
                 {
@@ -258,7 +254,18 @@ public class LavaTemplate
                     nodes.Add(new TextNode(_source[_pos..next]));
                 }
 
-                if (next == nextOutput)
+                if (next == nextShortcode)
+                {
+                    var close = _source.IndexOf("]}", next + 2, StringComparison.Ordinal);
+                    if (close == -1)
+                    {
+                        throw new LavaException("Unclosed shortcode: found \"{[\" without a matching \"]}\".");
+                    }
+                    var content = _source[(next + 2)..close].Trim();
+                    _pos = close + 2;
+                    nodes.Add(ParseShortcode(content));
+                }
+                else if (next == nextOutput)
                 {
                     var close = _source.IndexOf("}}", next + 2, StringComparison.Ordinal);
                     if (close == -1)
@@ -328,12 +335,71 @@ public class LavaTemplate
 
                 case "comment":
                 {
-                    var (_, term) = ParseBlock(new[] { "endcomment" });
+                    // Comment bodies are not parsed at all, matching Liquid.
+                    ReadRawUntil("endcomment");
+                    return new TextNode(string.Empty);
+                }
+
+                case "cycle":
+                {
+                    // {% cycle 'a', 'b' %} or {% cycle 'groupName': 'a', 'b' %}
+                    var t = new ExpressionTokenizer(rest);
+                    var first = Primary.Parse(t);
+                    Primary? group = null;
+                    var values = new List<Primary>();
+                    if (t.TryConsume(TokenType.Colon))
+                    {
+                        group = first;
+                        values.Add(Primary.Parse(t));
+                    }
+                    else
+                    {
+                        values.Add(first);
+                    }
+                    while (t.TryConsume(TokenType.Comma))
+                    {
+                        values.Add(Primary.Parse(t));
+                    }
+                    return new CycleNode(group, rest, values);
+                }
+
+                case "increment":
+                case "decrement":
+                {
+                    var counter = rest.Trim();
+                    if (counter.Length == 0)
+                    {
+                        throw new LavaException($"{{% {tagName} %}} requires a counter name.");
+                    }
+                    return new CounterNode(counter, increment: tagName.Equals("increment", StringComparison.OrdinalIgnoreCase));
+                }
+
+                case "tablerow":
+                {
+                    var t = new ExpressionTokenizer(rest);
+                    var varName = t.Expect(TokenType.Identifier, "the loop variable in {% tablerow %}").Text;
+                    if (!t.TryConsumeIdentifier("in"))
+                    {
+                        throw new LavaException("{% tablerow %} must look like: {% tablerow item in collection cols:n %}.");
+                    }
+                    var collection = FilteredExpression.Parse(t);
+                    var cols = 1;
+                    int? rowLimit = null;
+                    while (t.Peek().Type == TokenType.Identifier)
+                    {
+                        var modifier = t.Next().Text;
+                        t.Expect(TokenType.Colon, $"{modifier}:n in {{% tablerow %}}");
+                        var number = int.Parse(t.Expect(TokenType.Number, $"{modifier}:n").Text);
+                        if (modifier.Equals("cols", StringComparison.OrdinalIgnoreCase)) cols = Math.Max(1, number);
+                        else if (modifier.Equals("limit", StringComparison.OrdinalIgnoreCase)) rowLimit = number;
+                        else throw new LavaException($"Unknown {{% tablerow %}} modifier \"{modifier}\".");
+                    }
+                    var (body, term) = ParseBlock(new[] { "endtablerow" });
                     if (term == null)
                     {
-                        throw new LavaException("Missing {% endcomment %}.");
+                        throw new LavaException("Missing {% endtablerow %}.");
                     }
-                    return new TextNode(string.Empty);
+                    return new TableRowNode(varName, collection, cols, rowLimit, body);
                 }
 
                 case "if":
@@ -374,7 +440,7 @@ public class LavaTemplate
 
                 case "raw":
                 {
-                    return new TextNode(ReadRawUntilEndRaw());
+                    return new TextNode(ReadRawUntil("endraw"));
                 }
 
                 case "case":
@@ -445,6 +511,16 @@ public class LavaTemplate
                 }
 
                 default:
+                    if (EntityCommandNode.SupportedEntities.Contains(tagName))
+                    {
+                        var parameters = TagParams.Parse(rest);
+                        var (body, term) = ParseBlock(new[] { "end" + tagName.ToLowerInvariant() });
+                        if (term == null)
+                        {
+                            throw new LavaException($"Missing {{% end{tagName.ToLowerInvariant()} %}}.");
+                        }
+                        return new EntityCommandNode(tagName, parameters, body);
+                    }
                     if (tagName.StartsWith("end", StringComparison.OrdinalIgnoreCase) ||
                         tagName.Equals("else", StringComparison.OrdinalIgnoreCase) ||
                         tagName.Equals("elsif", StringComparison.OrdinalIgnoreCase) ||
@@ -452,7 +528,10 @@ public class LavaTemplate
                     {
                         throw new LavaException($"Unexpected {{% {tagName} %}} with no matching opening tag.");
                     }
-                    throw new LavaException($"Unknown tag {{% {tagName} %}}. Supported tags: assign, capture, comment, if, unless, for, case, raw.");
+                    throw new LavaException(
+                        $"Unknown tag {{% {tagName} %}}. Supported: assign, capture, comment, if, unless, for, case, raw, " +
+                        "cycle, increment, decrement, tablerow, and the entity commands " +
+                        string.Join(", ", EntityCommandNode.SupportedEntities.OrderBy(e => e)) + ".");
             }
         }
 
@@ -473,7 +552,8 @@ public class LavaTemplate
             return values;
         }
 
-        private string ReadRawUntilEndRaw()
+        /// <summary>Reads literal text until {% endTag %}, without parsing the contents.</summary>
+        private string ReadRawUntil(string endTag)
         {
             var start = _pos;
             var search = _pos;
@@ -482,19 +562,84 @@ public class LavaTemplate
                 var open = _source.IndexOf("{%", search, StringComparison.Ordinal);
                 if (open == -1)
                 {
-                    throw new LavaException("Missing {% endraw %}.");
+                    throw new LavaException($"Missing {{% {endTag} %}}.");
                 }
                 var close = _source.IndexOf("%}", open + 2, StringComparison.Ordinal);
                 if (close == -1)
                 {
-                    throw new LavaException("Missing {% endraw %}.");
+                    throw new LavaException($"Missing {{% {endTag} %}}.");
                 }
-                if (_source[(open + 2)..close].Trim().Equals("endraw", StringComparison.OrdinalIgnoreCase))
+                if (_source[(open + 2)..close].Trim().Equals(endTag, StringComparison.OrdinalIgnoreCase))
                 {
                     _pos = close + 2;
                     return _source[start..open];
                 }
                 search = open + 2;
+            }
+        }
+
+        /// <summary>
+        /// Parses a {[ shortcode ]} marker. Block shortcodes capture their raw
+        /// body up to {[ endname ]}; the body is rendered as Lava at render time.
+        /// </summary>
+        private Node ParseShortcode(string content)
+        {
+            if (content.Length == 0)
+            {
+                throw new LavaException("Empty shortcode: \"{[ ]}\" has no name.");
+            }
+
+            var name = FirstWord(content);
+            if (name.StartsWith("end", StringComparison.OrdinalIgnoreCase))
+            {
+                throw new LavaException($"Unexpected {{[ {name} ]}} with no matching opening shortcode.");
+            }
+
+            var parameters = TagParams.Parse(content[name.Length..].Trim());
+
+            if (Shortcodes.IsInline(name))
+            {
+                return new ShortcodeNode(name, parameters, rawBody: null);
+            }
+            if (!Shortcodes.IsBlock(name))
+            {
+                throw new LavaException(
+                    $"Unknown shortcode {{[ {name} ]}}. Available: {string.Join(", ", Shortcodes.AllNames.OrderBy(n => n))}.");
+            }
+
+            // Read the raw body until the matching {[ endname ]}, honoring nesting.
+            var endName = "end" + name.ToLowerInvariant();
+            var depth = 1;
+            var start = _pos;
+            var search = _pos;
+            while (true)
+            {
+                var open = _source.IndexOf("{[", search, StringComparison.Ordinal);
+                if (open == -1)
+                {
+                    throw new LavaException($"Missing {{[ {endName} ]}}.");
+                }
+                var close = _source.IndexOf("]}", open + 2, StringComparison.Ordinal);
+                if (close == -1)
+                {
+                    throw new LavaException($"Missing {{[ {endName} ]}}.");
+                }
+                var inner = _source[(open + 2)..close].Trim();
+                var innerName = FirstWord(inner);
+                if (innerName.Equals(name, StringComparison.OrdinalIgnoreCase))
+                {
+                    depth++;
+                }
+                else if (innerName.Equals(endName, StringComparison.OrdinalIgnoreCase))
+                {
+                    depth--;
+                    if (depth == 0)
+                    {
+                        _pos = close + 2;
+                        return new ShortcodeNode(name, parameters, _source[start..open]);
+                    }
+                }
+                search = close + 2;
             }
         }
 
@@ -507,6 +652,269 @@ public class LavaTemplate
             }
             return content[..end];
         }
+    }
+
+    private class CycleNode : Node
+    {
+        private readonly Primary? _group;
+        private readonly string _fallbackKey;
+        private readonly List<Primary> _values;
+
+        public CycleNode(Primary? group, string fallbackKey, List<Primary> values)
+        {
+            _group = group;
+            _fallbackKey = fallbackKey;
+            _values = values;
+        }
+
+        public override void Render(RenderContext context, StringBuilder sb)
+        {
+            var key = _group != null ? LavaValue.ToDisplayString(_group.Evaluate(context)) : _fallbackKey;
+            context.CycleState.TryGetValue(key, out var index);
+            context.CycleState[key] = index + 1;
+            sb.Append(LavaValue.ToDisplayString(_values[index % _values.Count].Evaluate(context)));
+        }
+    }
+
+    private class CounterNode : Node
+    {
+        private readonly string _name;
+        private readonly bool _increment;
+
+        public CounterNode(string name, bool increment)
+        {
+            _name = name;
+            _increment = increment;
+        }
+
+        public override void Render(RenderContext context, StringBuilder sb)
+        {
+            context.Counters.TryGetValue(_name, out var value);
+            if (_increment)
+            {
+                // Liquid semantics: output current value, then increment (first output is 0).
+                sb.Append(value);
+                context.Counters[_name] = value + 1;
+            }
+            else
+            {
+                // Decrement first, then output (first output is -1).
+                context.Counters[_name] = value - 1;
+                sb.Append(value - 1);
+            }
+        }
+    }
+
+    private class TableRowNode : Node
+    {
+        private readonly string _variableName;
+        private readonly FilteredExpression _collection;
+        private readonly int _cols;
+        private readonly int? _limit;
+        private readonly List<Node> _body;
+
+        public TableRowNode(string variableName, FilteredExpression collection, int cols, int? limit, List<Node> body)
+        {
+            _variableName = variableName;
+            _collection = collection;
+            _cols = cols;
+            _limit = limit;
+            _body = body;
+        }
+
+        public override void Render(RenderContext context, StringBuilder sb)
+        {
+            var value = _collection.Evaluate(context);
+            if (value is not IEnumerable<object?> rawItems || value is string)
+            {
+                return;
+            }
+            var items = rawItems.ToList();
+            if (_limit.HasValue)
+            {
+                items = items.Take(_limit.Value).ToList();
+            }
+
+            context.PushScope();
+            try
+            {
+                for (var i = 0; i < items.Count; i++)
+                {
+                    var row = i / _cols + 1;
+                    var col = i % _cols + 1;
+                    if (col == 1)
+                    {
+                        sb.Append($"<tr class=\"row{row}\">");
+                    }
+                    context.Set(_variableName, items[i]);
+                    sb.Append($"<td class=\"col{col}\">");
+                    foreach (var node in _body)
+                    {
+                        node.Render(context, sb);
+                    }
+                    sb.Append("</td>");
+                    if (col == _cols || i == items.Count - 1)
+                    {
+                        sb.Append("</tr>");
+                    }
+                }
+            }
+            finally
+            {
+                context.PopScope();
+            }
+        }
+    }
+
+    private class EntityCommandNode : Node
+    {
+        public static readonly HashSet<string> SupportedEntities = new(StringComparer.OrdinalIgnoreCase)
+        {
+            "person", "business", "group", "groupmember", "campus", "definedvalue", "contentchannelitem",
+        };
+
+        private readonly string _entity;
+        private readonly Dictionary<string, string> _params;
+        private readonly List<Node> _body;
+
+        public EntityCommandNode(string entity, Dictionary<string, string> parameters, List<Node> body)
+        {
+            _entity = entity.ToLowerInvariant();
+            _params = parameters;
+            _body = body;
+        }
+
+        public override void Render(RenderContext context, StringBuilder sb)
+        {
+            if (!context.EntityData.TryGetValue(_entity, out var dataset))
+            {
+                throw new LavaException(
+                    $"No sample data for {{% {_entity} %}}. Available locally: " +
+                    string.Join(", ", context.EntityData.Keys.OrderBy(k => k)) +
+                    ". (On a real Rock server this queries the database.)");
+            }
+
+            IEnumerable<object?> results = dataset;
+
+            if (TryParam("id", out var id))
+            {
+                results = dataset.Where(i => LavaValue.LooseEquals(PathValue(i, "Id"), id));
+            }
+            if (TryParam("where", out var where))
+            {
+                var predicate = WhereClause.Compile(RenderParam(where, context));
+                results = results.Where(predicate);
+            }
+            if (TryParam("sort", out var sort))
+            {
+                var parts = sort.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+                var descending = parts.Length > 1 && parts[1].Equals("desc", StringComparison.OrdinalIgnoreCase);
+                var comparer = Comparer<object?>.Create(LavaValue.CompareNumeric);
+                results = descending
+                    ? results.OrderByDescending(i => PathValue(i, parts[0]), comparer)
+                    : results.OrderBy(i => PathValue(i, parts[0]), comparer);
+            }
+            if (TryParam("offset", out var offset))
+            {
+                results = results.Skip(int.Parse(offset));
+            }
+            if (TryParam("limit", out var limit))
+            {
+                results = results.Take(int.Parse(limit));
+            }
+
+            var list = results.ToList();
+            var variableName = TryParam("iterator", out var iterator) ? iterator : _entity;
+
+            context.PushScope();
+            try
+            {
+                // With id: the variable is the single entity; otherwise it's the result set.
+                context.Set(variableName, _params.ContainsKey("id") ? list.FirstOrDefault() : list);
+                foreach (var node in _body)
+                {
+                    node.Render(context, sb);
+                }
+            }
+            finally
+            {
+                context.PopScope();
+            }
+        }
+
+        private bool TryParam(string name, out string value)
+        {
+            if (_params.TryGetValue(name, out var v))
+            {
+                value = v;
+                return true;
+            }
+            value = string.Empty;
+            return false;
+        }
+
+        private static string RenderParam(string value, RenderContext context) =>
+            value.Contains("{{") || value.Contains("{%")
+                ? Parse(value).Render(context)
+                : value;
+
+        private static object? PathValue(object? item, string path)
+        {
+            var current = item;
+            foreach (var segment in path.Split('.'))
+            {
+                if (current is IDictionary<string, object?> dict && dict.TryGetValue(segment, out var next))
+                {
+                    current = next;
+                }
+                else
+                {
+                    return null;
+                }
+            }
+            return current;
+        }
+    }
+
+    private class ShortcodeNode : Node
+    {
+        private readonly string _name;
+        private readonly Dictionary<string, string> _params;
+        private readonly string? _rawBody;
+
+        public ShortcodeNode(string name, Dictionary<string, string> parameters, string? rawBody)
+        {
+            _name = name.ToLowerInvariant();
+            _params = parameters;
+            _rawBody = rawBody;
+        }
+
+        public override void Render(RenderContext context, StringBuilder sb)
+        {
+            // Parameter values may themselves contain Lava.
+            var resolved = _params.ToDictionary(
+                kv => kv.Key,
+                kv => RenderLava(kv.Value, context),
+                StringComparer.OrdinalIgnoreCase);
+
+            var items = new List<Shortcodes.Item>();
+            var blockContent = string.Empty;
+            if (_rawBody != null)
+            {
+                var (body, parsedItems) = Shortcodes.ExtractItems(_rawBody);
+                items = parsedItems
+                    .Select(i => new Shortcodes.Item(
+                        i.Params.ToDictionary(kv => kv.Key, kv => RenderLava(kv.Value, context), StringComparer.OrdinalIgnoreCase),
+                        RenderLava(i.RawContent, context).Trim()))
+                    .ToList();
+                blockContent = RenderLava(body, context).Trim();
+            }
+
+            sb.Append(Shortcodes.Render(_name, resolved, items, blockContent));
+        }
+
+        private static string RenderLava(string source, RenderContext context) =>
+            source.Contains("{{") || source.Contains("{%") ? Parse(source).Render(context) : source;
     }
 
     private class CaseNode : Node

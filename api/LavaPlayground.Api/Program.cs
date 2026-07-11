@@ -20,6 +20,20 @@ var sampleContextJson = File.ReadAllText(
     Path.Combine(AppContext.BaseDirectory, "SampleData", "sample-context.json"));
 var sampleContextElement = JsonDocument.Parse(sampleContextJson).RootElement;
 
+// The sample "database" that entity command tags ({% person %}, {% group %}, ...) query.
+var entityDataJson = File.ReadAllText(
+    Path.Combine(AppContext.BaseDirectory, "SampleData", "sample-entities.json"));
+var entityData = JsonObjectConverter.ToDictionary(JsonDocument.Parse(entityDataJson).RootElement)
+    .ToDictionary(
+        kv => kv.Key,
+        kv => (kv.Value as List<object?>) ?? new List<object?>(),
+        StringComparer.OrdinalIgnoreCase);
+
+// Optional: auto-connect to a Rock server at startup so remote mode
+// survives backend restarts. Set via environment variables:
+//   ROCK_BASE_URL + ROCK_API_KEY  (or ROCK_USERNAME + ROCK_PASSWORD)
+var autoRockUrl = Environment.GetEnvironmentVariable("ROCK_BASE_URL");
+
 app.MapGet("/health", () => Results.Ok(new { status = "ok" }));
 
 app.MapGet("/api/sample-context", () => Results.Content(sampleContextJson, "application/json"));
@@ -47,7 +61,7 @@ app.MapPost("/api/render", (RenderRequest request) =>
     try
     {
         var template = LavaTemplate.Parse(request.Template);
-        var output = template.Render(new RenderContext(context, filters));
+        var output = template.Render(new RenderContext(context, filters, entityData));
         stopwatch.Stop();
         return Results.Ok(new RenderResponse(output, stopwatch.Elapsed.TotalMilliseconds, null));
     }
@@ -57,6 +71,28 @@ app.MapPost("/api/render", (RenderRequest request) =>
         return Results.Ok(new RenderResponse(null, stopwatch.Elapsed.TotalMilliseconds, ex.Message));
     }
 });
+
+if (!string.IsNullOrWhiteSpace(autoRockUrl))
+{
+    // Fire-and-forget so a slow Rock server doesn't block startup.
+    _ = Task.Run(async () =>
+    {
+        try
+        {
+            var rock = app.Services.GetRequiredService<RockConnectionService>();
+            await rock.ConnectAsync(new RockConnectRequest(
+                autoRockUrl,
+                Environment.GetEnvironmentVariable("ROCK_API_KEY"),
+                Environment.GetEnvironmentVariable("ROCK_USERNAME"),
+                Environment.GetEnvironmentVariable("ROCK_PASSWORD")));
+            app.Logger.LogInformation("Auto-connected to Rock server {Url}", autoRockUrl);
+        }
+        catch (Exception ex)
+        {
+            app.Logger.LogWarning("Rock auto-connect failed: {Message}", ex.Message);
+        }
+    });
+}
 
 // ---------------------------------------------------------------------------
 // Remote mode: render on a real Rock server via its REST API.

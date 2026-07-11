@@ -13,10 +13,23 @@ public class RenderContext
 
     public LavaFilterRegistry Filters { get; }
 
-    public RenderContext(Dictionary<string, object?> root, LavaFilterRegistry filters)
+    /// <summary>The sample "database" that entity command tags query, keyed by entity name.</summary>
+    public IReadOnlyDictionary<string, List<object?>> EntityData { get; }
+
+    /// <summary>Per-render state for {% cycle %} groups.</summary>
+    public Dictionary<string, int> CycleState { get; } = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>Per-render counters for {% increment %} / {% decrement %}.</summary>
+    public Dictionary<string, int> Counters { get; } = new(StringComparer.OrdinalIgnoreCase);
+
+    public RenderContext(
+        Dictionary<string, object?> root,
+        LavaFilterRegistry filters,
+        IReadOnlyDictionary<string, List<object?>>? entityData = null)
     {
         _scopes.Add(new Dictionary<string, object?>(root, StringComparer.OrdinalIgnoreCase));
         Filters = filters;
+        EntityData = entityData ?? new Dictionary<string, List<object?>>(StringComparer.OrdinalIgnoreCase);
     }
 
     public void PushScope() => _scopes.Add(new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase));

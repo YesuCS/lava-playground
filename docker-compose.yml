@@ -1,0 +1,20 @@
+services:
+  api:
+    build:
+      context: ./api
+      dockerfile: LavaPlayground.Api/Dockerfile
+    ports:
+      - "5133:5133"
+
+  linter:
+    build: ./linter
+    ports:
+      - "8000:8000"
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "5173:80"
+    depends_on:
+      - api
+      - linter

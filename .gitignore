@@ -1,0 +1,12 @@
+bin/
+obj/
+node_modules/
+dist/
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+.vs/
+.idea/
+*.user
+.DS_Store

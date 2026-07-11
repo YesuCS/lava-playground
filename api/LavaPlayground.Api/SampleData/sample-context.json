@@ -1,0 +1,42 @@
+{
+  "Person": {
+    "NickName": "Sam",
+    "FirstName": "Samuel",
+    "LastName": "Houston",
+    "FullName": "Sam Houston",
+    "Email": "sam.houston@example.com",
+    "BirthDate": "1993-03-02",
+    "Age": 33,
+    "Gender": "Male",
+    "MiddleName": "",
+    "IsBaptized": true,
+    "AttendanceStreak": 7,
+    "ConnectionStatus": "Member",
+    "Campus": {
+      "Name": "The Loop",
+      "ShortCode": "LOOP",
+      "City": "Houston"
+    },
+    "Groups": [
+      { "Name": "Young Pros Life Bible Study", "Role": "Leader", "Members": 14, "MeetingDay": "Tuesday" },
+      { "Name": "Serve Team: Check-In", "Role": "Member", "Members": 8, "MeetingDay": "Sunday" },
+      { "Name": "Worship Choir", "Role": "Member", "Members": 120, "MeetingDay": "Wednesday" }
+    ]
+  },
+  "Campuses": [
+    { "Name": "The Loop", "City": "Houston", "Attendance": 3200, "IsOriginal": true },
+    { "Name": "Cypress", "City": "Cypress", "Attendance": 1100, "IsOriginal": false },
+    { "Name": "Downtown", "City": "Houston", "Attendance": 650, "IsOriginal": false },
+    { "Name": "Sienna", "City": "Missouri City", "Attendance": 800, "IsOriginal": false }
+  ],
+  "Events": [
+    { "Name": "Vacation Bible School", "StartDate": "2026-07-13", "Registered": 412, "Capacity": 450 },
+    { "Name": "Men's Retreat", "StartDate": "2026-09-18", "Registered": 96, "Capacity": 120 },
+    { "Name": "Christmas Concert", "StartDate": "2026-12-18", "Registered": 1875, "Capacity": 2000 }
+  ],
+  "GlobalAttributes": {
+    "OrganizationName": "Houston's First Baptist Church",
+    "PublicSiteUrl": "https://example.org",
+    "CurrentSeries": "Rooted"
+  }
+}

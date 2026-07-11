@@ -1,8 +1,10 @@
 using System.Diagnostics;
 using System.Text.Json;
 using LavaPlayground.Api.Lava;
+using LavaPlayground.Api.Rock;
 
 var builder = WebApplication.CreateBuilder(args);
+builder.Services.AddSingleton<RockConnectionService>();
 
 builder.Services.AddCors(options =>
 {
@@ -54,6 +56,40 @@ app.MapPost("/api/render", (RenderRequest request) =>
         stopwatch.Stop();
         return Results.Ok(new RenderResponse(null, stopwatch.Elapsed.TotalMilliseconds, ex.Message));
     }
+});
+
+// ---------------------------------------------------------------------------
+// Remote mode: render on a real Rock server via its REST API.
+// ---------------------------------------------------------------------------
+
+app.MapGet("/api/rock/status", (RockConnectionService rock) => rock.Status);
+
+app.MapPost("/api/rock/connect", async (RockConnectRequest request, RockConnectionService rock) =>
+{
+    try
+    {
+        return Results.Ok(await rock.ConnectAsync(request));
+    }
+    catch (RockProxyException ex)
+    {
+        return Results.BadRequest(new { error = ex.Message });
+    }
+});
+
+app.MapPost("/api/rock/disconnect", (RockConnectionService rock) =>
+{
+    rock.Disconnect();
+    return Results.Ok(rock.Status);
+});
+
+app.MapPost("/api/rock/render", async (RenderRequest request, RockConnectionService rock) =>
+{
+    if (string.IsNullOrEmpty(request.Template))
+    {
+        return Results.Ok(new RenderResponse(string.Empty, 0, null));
+    }
+    var result = await rock.RenderAsync(request.Template);
+    return Results.Ok(new RenderResponse(result.Output, result.ElapsedMs, result.Error));
 });
 
 app.Run();

@@ -111,3 +111,46 @@ def test_line_and_column_positions():
 
 def test_double_pipe_warning():
     assert "double-pipe" in codes("{{ 'x' || Upcase }}")
+
+
+def test_remote_only_filter_is_info():
+    issues = lint("{{ CurrentPerson | Attribute:'BaptismDate' }}")
+    assert issues[0].code == "remote-only-filter"
+    assert issues[0].severity == "info"
+
+
+def test_remote_only_block_tag():
+    source = "{% sql %}SELECT 1{% endsql %}"
+    issues = lint(source)
+    assert [i.code for i in issues] == ["remote-only-tag"]
+    assert issues[0].severity == "info"
+
+
+def test_remote_only_block_left_open():
+    assert "unclosed-block" in codes("{% person where:'Id == 1' %}")
+
+
+def test_case_when_structure_ok():
+    assert lint("{% case x %}{% when 1 %}a{% else %}b{% endcase %}") == []
+
+
+def test_when_outside_case():
+    assert "orphan-branch" in codes("{% when 1 %}")
+
+
+def test_raw_hides_content():
+    assert lint("{% raw %}{{ | bogus }}{% wat %}{% endraw %}") == []
+
+
+def test_case_filter_suggestions_include_remote():
+    issues = lint("{{ p | PersonByIdd }}")
+    assert issues[0].code == "unknown-filter"
+    assert "PersonById" in issues[0].suggestion
+
+
+def test_new_filters_are_known():
+    assert lint("{{ Campuses | Sort:'Name','desc' | Take:2 | Sum:'Attendance' | FormatAsCurrency }}") == []
+
+
+def test_assign_expression_filters_are_checked():
+    assert "unknown-filter" in codes("{% assign x = 'a' | Upcaze %}")

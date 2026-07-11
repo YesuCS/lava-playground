@@ -269,6 +269,174 @@ body {
   border-color: var(--lava);
 }
 
+.learn-layout {
+  grid-template-columns: 340px 1fr 1fr;
+}
+
+.learn-panel {
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  background: var(--bg-panel);
+}
+
+.lesson-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  padding: 0.6rem 0.9rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.lesson-chip {
+  background: var(--bg-panel-alt);
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  font-size: 0.72rem;
+  padding: 0.2rem 0.5rem;
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.lesson-chip.active {
+  border-color: var(--lava);
+  color: var(--text);
+}
+
+.lesson-chip.done {
+  color: var(--ok);
+}
+
+.lesson-body {
+  padding: 0.75rem 0.9rem;
+  font-size: 0.85rem;
+  line-height: 1.5;
+}
+
+.lesson-body h3 {
+  margin-top: 0;
+  color: var(--lava);
+}
+
+.check-button {
+  background: var(--lava-dim);
+  border: 1px solid var(--lava);
+  color: white;
+  font-size: 0.8rem;
+  padding: 0.35rem 0.8rem;
+  border-radius: 5px;
+  cursor: pointer;
+  margin-top: 0.4rem;
+}
+
+.check-button:hover {
+  background: var(--lava);
+}
+
+.check-button.secondary {
+  background: transparent;
+  border-color: var(--border);
+  color: var(--text-dim);
+}
+
+.check-results {
+  margin-top: 0.7rem;
+  border-top: 1px solid var(--border);
+  padding-top: 0.5rem;
+}
+
+.check-line {
+  color: var(--err);
+  padding: 0.15rem 0;
+}
+
+.check-line.pass {
+  color: var(--ok);
+}
+
+.lesson-done {
+  margin-top: 0.6rem;
+  color: var(--ok);
+  font-weight: 600;
+}
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 50;
+}
+
+.modal {
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-top: 2px solid var(--lava);
+  border-radius: 8px;
+  padding: 1.2rem 1.4rem;
+  width: min(480px, 92vw);
+  max-height: 85vh;
+  overflow-y: auto;
+}
+
+.modal h3 {
+  margin-top: 0;
+}
+
+.modal label {
+  display: block;
+  font-size: 0.75rem;
+  color: var(--text-dim);
+  margin: 0.6rem 0 0.2rem;
+}
+
+.modal input {
+  width: 100%;
+  padding: 0.4rem 0.6rem;
+  background: var(--bg-panel-alt);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text);
+  font-size: 0.85rem;
+}
+
+.modal input:focus {
+  outline: none;
+  border-color: var(--lava);
+}
+
+.modal-note {
+  font-size: 0.78rem;
+  color: var(--text-dim);
+  line-height: 1.45;
+}
+
+.modal-note code {
+  color: var(--warn);
+}
+
+.modal-actions {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.9rem;
+}
+
+.connected-box {
+  background: rgba(74, 222, 128, 0.08);
+  border: 1px solid rgba(74, 222, 128, 0.3);
+  border-radius: 6px;
+  padding: 0.6rem 0.8rem;
+  font-size: 0.82rem;
+  margin-bottom: 0.4rem;
+}
+
+.error-text {
+  color: var(--err);
+  font-size: 0.8rem;
+}
+
 .context-json {
   font-family: monospace;
   font-size: 0.72rem;

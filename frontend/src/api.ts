@@ -27,13 +27,51 @@ export interface LintResponse {
   counts: { error: number; warning: number; info: number }
 }
 
-export async function renderTemplate(template: string): Promise<RenderResponse> {
-  const response = await fetch('/api/render', {
+export type Engine = 'local' | 'rock'
+
+export interface RockStatus {
+  connected: boolean
+  baseUrl: string | null
+  authType: string | null
+}
+
+export interface RockConnectRequest {
+  baseUrl: string
+  apiKey?: string
+  username?: string
+  password?: string
+}
+
+export async function renderTemplate(template: string, engine: Engine = 'local'): Promise<RenderResponse> {
+  const endpoint = engine === 'rock' ? '/api/rock/render' : '/api/render'
+  const response = await fetch(endpoint, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ template }),
   })
   if (!response.ok) throw new Error(`Render API returned ${response.status}`)
+  return response.json()
+}
+
+export async function rockStatus(): Promise<RockStatus> {
+  const response = await fetch('/api/rock/status')
+  if (!response.ok) throw new Error(`Status returned ${response.status}`)
+  return response.json()
+}
+
+export async function rockConnect(request: RockConnectRequest): Promise<RockStatus> {
+  const response = await fetch('/api/rock/connect', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(request),
+  })
+  const body = await response.json()
+  if (!response.ok) throw new Error(body.error ?? `Connect failed with ${response.status}`)
+  return body
+}
+
+export async function rockDisconnect(): Promise<RockStatus> {
+  const response = await fetch('/api/rock/disconnect', { method: 'POST' })
   return response.json()
 }
 

@@ -1,16 +1,22 @@
 using System.Globalization;
 using System.Text;
-using System.Text.RegularExpressions;
 
 namespace LavaPlayground.Api.Lava;
 
 public record FilterInfo(string Name, string Category, string Description, string Example);
 
 /// <summary>
-/// The filter registry: standard Liquid filters plus a set of
-/// Rock-RMS-flavored filters (Humanize, Possessive, NumberToOrdinal, ...).
+/// The filter registry. Aims for full coverage of Rock RMS's Lava filters
+/// that can run without a Rock database: Text, Numeric, Date, Collection,
+/// Type-coercion, and Color categories. Entity-bound filters (Attribute,
+/// Address, PersonById, ...) are only available in remote mode, where the
+/// template renders on a real Rock server.
+///
+/// Registration is split across partial class files by category:
+///   LavaFilters.Strings.cs, .Numbers.cs, .Dates.cs, .Arrays.cs,
+///   .Colors.cs, .Misc.cs
 /// </summary>
-public class LavaFilterRegistry
+public partial class LavaFilterRegistry
 {
     private readonly Dictionary<string, (FilterInfo Info, Func<object?, object?[], object?> Fn)> _filters =
         new(StringComparer.OrdinalIgnoreCase);
@@ -39,6 +45,22 @@ public class LavaFilterRegistry
         }
     }
 
+    public static LavaFilterRegistry CreateDefault()
+    {
+        var r = new LavaFilterRegistry();
+        r.RegisterStringFilters();
+        r.RegisterNumberFilters();
+        r.RegisterDateFilters();
+        r.RegisterArrayFilters();
+        r.RegisterColorFilters();
+        r.RegisterMiscFilters();
+        return r;
+    }
+
+    // -----------------------------------------------------------------------
+    // Shared helpers for the category files
+    // -----------------------------------------------------------------------
+
     private void Register(string name, string category, string description, string example, Func<object?, object?[], object?> fn) =>
         _filters[name] = (new FilterInfo(name, category, description, example), fn);
 
@@ -55,389 +77,66 @@ public class LavaFilterRegistry
 
     private static object? Arg(object?[] args, int index) => index < args.Length ? args[index] : null;
 
-    public static LavaFilterRegistry CreateDefault()
+    /// <summary>Returns the input as a list, or null when it isn't a collection.</summary>
+    private static List<object?>? AsList(object? input) => input switch
     {
-        var r = new LavaFilterRegistry();
+        string => null,
+        IDictionary<string, object?> => null,
+        IEnumerable<object?> items => items.ToList(),
+        _ => null,
+    };
 
-        // ---------------- String filters ----------------
-        r.Register("Upcase", "String", "Converts a string to uppercase.",
-            "{{ 'hello' | Upcase }} → HELLO",
-            (input, _) => Str(input).ToUpperInvariant());
-
-        r.Register("Downcase", "String", "Converts a string to lowercase.",
-            "{{ 'HELLO' | Downcase }} → hello",
-            (input, _) => Str(input).ToLowerInvariant());
-
-        r.Register("Capitalize", "String", "Capitalizes the first character of a string.",
-            "{{ 'houston' | Capitalize }} → Houston",
-            (input, _) =>
+    /// <summary>Resolves a dotted property path (e.g. "GroupRole.Name") on an object tree.</summary>
+    private static object? PropValue(object? item, string path)
+    {
+        var current = item;
+        foreach (var segment in path.Split('.'))
+        {
+            if (current is IDictionary<string, object?> dict && dict.TryGetValue(segment, out var next))
             {
-                var s = Str(input);
-                return s.Length == 0 ? s : char.ToUpperInvariant(s[0]) + s[1..];
-            });
-
-        r.Register("TitleCase", "String", "Capitalizes the first letter of each word.",
-            "{{ 'the loop campus' | TitleCase }} → The Loop Campus",
-            (input, _) => CultureInfo.InvariantCulture.TextInfo.ToTitleCase(Str(input).ToLowerInvariant()));
-
-        r.Register("SentenceCase", "String", "Capitalizes only the first letter of the sentence.",
-            "{{ 'WELCOME HOME' | SentenceCase }} → Welcome home",
-            (input, _) =>
+                current = next;
+            }
+            else
             {
-                var s = Str(input).ToLowerInvariant();
-                return s.Length == 0 ? s : char.ToUpperInvariant(s[0]) + s[1..];
-            });
+                return null;
+            }
+        }
+        return current;
+    }
 
-        r.Register("Humanize", "String", "Turns camelCase or snake_case identifiers into readable text.",
-            "{{ 'FirstTimeGuest' | Humanize }} → First time guest",
-            (input, _) =>
-            {
-                var s = Str(input);
-                s = Regex.Replace(s, "([a-z0-9])([A-Z])", "$1 $2");
-                s = s.Replace('_', ' ').Replace('-', ' ');
-                s = Regex.Replace(s, @"\s+", " ").Trim().ToLowerInvariant();
-                return s.Length == 0 ? s : char.ToUpperInvariant(s[0]) + s[1..];
-            });
+    private static DateTime ToDate(object? value, string filterName)
+    {
+        if (!TryToDate(value, out var date))
+        {
+            throw new LavaException($"\"{Str(value)}\" is not a date (in filter {filterName}).");
+        }
+        return date;
+    }
 
-        r.Register("Truncate", "String", "Shortens a string to n characters, appending an ellipsis if truncated.",
-            "{{ 'Houston''s First' | Truncate:9 }} → Houston's…",
-            (input, args) =>
-            {
-                var s = Str(input);
-                var length = (int)Num(Arg(args, 0) ?? 50m, "Truncate");
-                return s.Length <= length ? s : s[..length] + "…";
-            });
-
-        r.Register("Replace", "String", "Replaces every occurrence of a value in the string.",
-            "{{ 'pew pew' | Replace:'pew','wow' }} → wow wow",
-            (input, args) => Str(input).Replace(Str(Arg(args, 0)), Str(Arg(args, 1))));
-
-        r.Register("Remove", "String", "Removes every occurrence of a value from the string.",
-            "{{ 'Lava is hot hot' | Remove:' hot' }} → Lava is",
-            (input, args) => Str(input).Replace(Str(Arg(args, 0)), string.Empty));
-
-        r.Register("Append", "String", "Appends a value to the end of a string.",
-            "{{ 'Houston' | Append:'''s First' }} → Houston's First",
-            (input, args) => Str(input) + Str(Arg(args, 0)));
-
-        r.Register("Prepend", "String", "Prepends a value to the start of a string.",
-            "{{ 'First' | Prepend:'Houston''s ' }} → Houston's First",
-            (input, args) => Str(Arg(args, 0)) + Str(input));
-
-        r.Register("Split", "String", "Splits a string into an array on a separator.",
-            "{{ 'a,b,c' | Split:',' | Size }} → 3",
-            (input, args) => Str(input).Split(Str(Arg(args, 0))).Cast<object?>().ToList());
-
-        r.Register("Trim", "String", "Removes leading and trailing whitespace.",
-            "{{ '  hi  ' | Trim }} → hi",
-            (input, _) => Str(input).Trim());
-
-        r.Register("Right", "String", "Returns the rightmost n characters.",
-            "{{ 'Houston' | Right:3 }} → ton",
-            (input, args) =>
-            {
-                var s = Str(input);
-                var n = (int)Num(Arg(args, 0) ?? 1m, "Right");
-                return n >= s.Length ? s : s[^n..];
-            });
-
-        r.Register("Left", "String", "Returns the leftmost n characters.",
-            "{{ 'Houston' | Left:3 }} → Hou",
-            (input, args) =>
-            {
-                var s = Str(input);
-                var n = (int)Num(Arg(args, 0) ?? 1m, "Left");
-                return n >= s.Length ? s : s[..n];
-            });
-
-        r.Register("Slice", "String", "Returns a substring starting at an index (negative counts from the end).",
-            "{{ 'Lava' | Slice:1,2 }} → av",
-            (input, args) =>
-            {
-                var s = Str(input);
-                var start = (int)Num(Arg(args, 0) ?? 0m, "Slice");
-                if (start < 0) start = Math.Max(0, s.Length + start);
-                if (start >= s.Length) return string.Empty;
-                var len = args.Length > 1 ? (int)Num(args[1], "Slice") : 1;
-                return s.Substring(start, Math.Min(len, s.Length - start));
-            });
-
-        r.Register("Pluralize", "String", "Returns the plural form of a singular English word.",
-            "{{ 'person' | Pluralize }} → people",
-            (input, _) => Pluralize(Str(input)));
-
-        r.Register("PluralizeForQuantity", "String", "Pluralizes the word only when the quantity is not 1.",
-            "{{ 'kid' | PluralizeForQuantity:3 }} → kids",
-            (input, args) =>
-            {
-                var qty = Num(Arg(args, 0) ?? 1m, "PluralizeForQuantity");
-                return qty == 1m ? Str(input) : Pluralize(Str(input));
-            });
-
-        r.Register("Possessive", "String", "Makes a name possessive, following English style rules.",
-            "{{ 'Yesu' | Possessive }} → Yesu's",
-            (input, _) =>
-            {
-                var s = Str(input);
-                return s.EndsWith("s", StringComparison.OrdinalIgnoreCase) ? s + "'" : s + "'s";
-            });
-
-        r.Register("ToCssClass", "String", "Lowercases a string and replaces non-alphanumerics with hyphens.",
-            "{{ 'The Loop Campus' | ToCssClass }} → the-loop-campus",
-            (input, _) =>
-            {
-                var s = Regex.Replace(Str(input).ToLowerInvariant(), "[^a-z0-9]+", "-").Trim('-');
-                return s;
-            });
-
-        r.Register("HtmlEncode", "String", "Encodes a string so it is safe to place in HTML.",
-            "{{ '<b>hi</b>' | HtmlEncode }} → &lt;b&gt;hi&lt;/b&gt;",
-            (input, _) => System.Net.WebUtility.HtmlEncode(Str(input)));
-
-        // ---------------- Number filters ----------------
-        r.Register("Plus", "Number", "Adds a number.",
-            "{{ 3 | Plus:4 }} → 7",
-            (input, args) => Num(input, "Plus") + Num(Arg(args, 0) ?? 0m, "Plus"));
-
-        r.Register("Minus", "Number", "Subtracts a number.",
-            "{{ 10 | Minus:4 }} → 6",
-            (input, args) => Num(input, "Minus") - Num(Arg(args, 0) ?? 0m, "Minus"));
-
-        r.Register("Times", "Number", "Multiplies by a number.",
-            "{{ 6 | Times:7 }} → 42",
-            (input, args) => Num(input, "Times") * Num(Arg(args, 0) ?? 1m, "Times"));
-
-        r.Register("DividedBy", "Number", "Divides by a number.",
-            "{{ 84 | DividedBy:2 }} → 42",
-            (input, args) =>
-            {
-                var divisor = Num(Arg(args, 0) ?? 1m, "DividedBy");
-                if (divisor == 0)
-                {
-                    throw new LavaException("Cannot divide by zero.");
-                }
-                return Num(input, "DividedBy") / divisor;
-            });
-
-        r.Register("Modulo", "Number", "Returns the remainder of a division.",
-            "{{ 7 | Modulo:3 }} → 1",
-            (input, args) => Num(input, "Modulo") % Num(Arg(args, 0) ?? 1m, "Modulo"));
-
-        r.Register("Floor", "Number", "Rounds down to the nearest whole number.",
-            "{{ 4.7 | Floor }} → 4",
-            (input, _) => Math.Floor(Num(input, "Floor")));
-
-        r.Register("Ceiling", "Number", "Rounds up to the nearest whole number.",
-            "{{ 4.2 | Ceiling }} → 5",
-            (input, _) => Math.Ceiling(Num(input, "Ceiling")));
-
-        r.Register("Format", "Number", "Formats a number using a .NET format string.",
-            "{{ 1234.5 | Format:'#,##0.00' }} → 1,234.50",
-            (input, args) =>
-            {
-                var format = Str(Arg(args, 0));
-                if (LavaValue.TryToNumber(input, out var n))
-                {
-                    return n.ToString(format, CultureInfo.InvariantCulture);
-                }
-                if (DateTime.TryParse(Str(input), CultureInfo.InvariantCulture, DateTimeStyles.None, out var dt))
-                {
-                    return dt.ToString(format, CultureInfo.InvariantCulture);
-                }
-                return Str(input);
-            });
-
-        r.Register("NumberToOrdinal", "Number", "Converts a number to its ordinal form.",
-            "{{ 3 | NumberToOrdinal }} → 3rd",
-            (input, _) =>
-            {
-                var n = (long)Num(input, "NumberToOrdinal");
-                var suffix = (n % 100) is 11 or 12 or 13 ? "th" : (n % 10) switch
-                {
-                    1 => "st",
-                    2 => "nd",
-                    3 => "rd",
-                    _ => "th",
-                };
-                return n + suffix;
-            });
-
-        r.Register("NumberToOrdinalWords", "Number", "Converts a number to ordinal words.",
-            "{{ 3 | NumberToOrdinalWords }} → third",
-            (input, _) => NumberToOrdinalWords((int)Num(input, "NumberToOrdinalWords")));
-
-        r.Register("NumberToWords", "Number", "Spells out a number in English words.",
-            "{{ 3200 | NumberToWords }} → three thousand two hundred",
-            (input, _) => NumberToWords((long)Num(input, "NumberToWords")));
-
-        r.Register("NumberToRomanNumerals", "Number", "Converts a number (1-3999) to Roman numerals.",
-            "{{ 2026 | NumberToRomanNumerals }} → MMXXVI",
-            (input, _) => ToRoman((int)Num(input, "NumberToRomanNumerals")));
-
-        r.Register("AsInteger", "Number", "Converts a value to a whole number.",
-            "{{ '42.9' | AsInteger }} → 42",
-            (input, _) => decimal.Truncate(Num(input, "AsInteger")));
-
-        r.Register("AsDecimal", "Number", "Converts a value to a decimal number.",
-            "{{ '3.14' | AsDecimal | Plus:1 }} → 4.14",
-            (input, _) => Num(input, "AsDecimal"));
-
-        // ---------------- Date filters ----------------
-        r.Register("Date", "Date", "Formats a date using a .NET format string. The input 'Now' means the current time.",
-            "{{ 'Now' | Date:'dddd, MMMM d, yyyy' }}",
-            (input, args) =>
-            {
-                var format = Str(Arg(args, 0) ?? "M/d/yyyy");
-                DateTime date;
-                var s = Str(input);
-                if (s.Equals("Now", StringComparison.OrdinalIgnoreCase))
-                {
-                    date = DateTime.Now;
-                }
-                else if (s.Equals("Today", StringComparison.OrdinalIgnoreCase))
-                {
-                    date = DateTime.Today;
-                }
-                else if (!DateTime.TryParse(s, CultureInfo.InvariantCulture, DateTimeStyles.None, out date))
-                {
-                    return s; // Not a date; pass it through untouched.
-                }
-                return date.ToString(format, CultureInfo.InvariantCulture);
-            });
-
-        r.Register("DaysUntil", "Date", "Returns the number of whole days from today until the given date.",
-            "{{ '2026-12-25' | DaysUntil }}",
-            (input, _) =>
-            {
-                if (!DateTime.TryParse(Str(input), CultureInfo.InvariantCulture, DateTimeStyles.None, out var date))
-                {
-                    throw new LavaException($"\"{Str(input)}\" is not a date (in filter DaysUntil).");
-                }
-                return (decimal)(date.Date - DateTime.Today).TotalDays;
-            });
-
-        r.Register("HumanizeTimeSpan", "Date", "Describes how long ago (or from now) a date is, in friendly words.",
-            "{{ '2020-01-01' | HumanizeTimeSpan }} → 6 years ago",
-            (input, _) =>
-            {
-                if (!DateTime.TryParse(Str(input), CultureInfo.InvariantCulture, DateTimeStyles.None, out var date))
-                {
-                    throw new LavaException($"\"{Str(input)}\" is not a date (in filter HumanizeTimeSpan).");
-                }
-                var span = DateTime.Now - date;
-                var future = span.TotalSeconds < 0;
-                span = span.Duration();
-                string text = span.TotalDays >= 365 ? Plural((int)(span.TotalDays / 365), "year")
-                    : span.TotalDays >= 30 ? Plural((int)(span.TotalDays / 30), "month")
-                    : span.TotalDays >= 1 ? Plural((int)span.TotalDays, "day")
-                    : span.TotalHours >= 1 ? Plural((int)span.TotalHours, "hour")
-                    : Plural(Math.Max(1, (int)span.TotalMinutes), "minute");
-                return future ? "in " + text : text + " ago";
-
-                static string Plural(int n, string unit) => n == 1 ? $"1 {unit}" : $"{n} {unit}s";
-            });
-
-        // ---------------- Array filters ----------------
-        r.Register("Size", "Array", "Returns the number of items in an array or characters in a string.",
-            "{{ Person.Groups | Size }}",
-            (input, _) => input switch
-            {
-                string s => (decimal)s.Length,
-                IEnumerable<object?> items => (decimal)items.Count(),
-                _ => 0m,
-            });
-
-        r.Register("First", "Array", "Returns the first item of an array.",
-            "{{ Person.Groups | First }}",
-            (input, _) => input is not string and IEnumerable<object?> items ? items.FirstOrDefault() : input);
-
-        r.Register("Last", "Array", "Returns the last item of an array.",
-            "{{ Person.Groups | Last }}",
-            (input, _) => input is not string and IEnumerable<object?> items ? items.LastOrDefault() : input);
-
-        r.Register("Join", "Array", "Joins array items into a string with a separator.",
-            "{{ Campuses | Map:'Name' | Join:', ' }}",
-            (input, args) => input is not string and IEnumerable<object?> items
-                ? string.Join(Str(Arg(args, 0) ?? ", "), items.Select(Str))
-                : Str(input));
-
-        r.Register("Map", "Array", "Plucks one property from each item in an array of objects.",
-            "{{ Campuses | Map:'Name' | Join:', ' }}",
-            (input, args) =>
-            {
-                var key = Str(Arg(args, 0));
-                if (input is not IEnumerable<object?> items || input is string)
-                {
-                    return input;
-                }
-                return items
-                    .Select(i => i is IDictionary<string, object?> d && d.TryGetValue(key, out var v) ? v : null)
-                    .ToList();
-            });
-
-        r.Register("Sort", "Array", "Sorts an array, optionally by a property of each item.",
-            "{{ Campuses | Sort:'Attendance' | Map:'Name' | Join:', ' }}",
-            (input, args) =>
-            {
-                if (input is not IEnumerable<object?> items || input is string)
-                {
-                    return input;
-                }
-                var key = args.Length > 0 ? Str(args[0]) : null;
-                object? KeyOf(object? item) => key != null && item is IDictionary<string, object?> d && d.TryGetValue(key, out var v) ? v : item;
-                return items.OrderBy(KeyOf, Comparer<object?>.Create(LavaValue.CompareNumeric)).ToList();
-            });
-
-        r.Register("Reverse", "Array", "Reverses the order of an array.",
-            "{{ Campuses | Reverse | Map:'Name' | Join:', ' }}",
-            (input, _) => input is not string and IEnumerable<object?> items ? items.Reverse().ToList() : input);
-
-        r.Register("Uniq", "Array", "Removes duplicate values from an array.",
-            "{{ 'a,b,a' | Split:',' | Uniq | Join:',' }} → a,b",
-            (input, _) =>
-            {
-                if (input is not IEnumerable<object?> items || input is string)
-                {
-                    return input;
-                }
-                var seen = new List<object?>();
-                foreach (var item in items)
-                {
-                    if (!seen.Any(s => LavaValue.LooseEquals(s, item)))
-                    {
-                        seen.Add(item);
-                    }
-                }
-                return seen;
-            });
-
-        r.Register("Where", "Array", "Filters an array of objects to items whose property equals a value.",
-            "{{ Person.Groups | Where:'Role','Leader' | Size }}",
-            (input, args) =>
-            {
-                if (input is not IEnumerable<object?> items || input is string)
-                {
-                    return input;
-                }
-                var key = Str(Arg(args, 0));
-                var expected = Arg(args, 1);
-                return items
-                    .Where(i => i is IDictionary<string, object?> d && d.TryGetValue(key, out var v) && LavaValue.LooseEquals(v, expected))
-                    .ToList();
-            });
-
-        // ---------------- Logic filters ----------------
-        r.Register("Default", "Logic", "Returns a fallback when the input is null, false, or an empty string.",
-            "{{ Person.MiddleName | Default:'(none)' }}",
-            (input, args) => input == null || input as bool? == false || (input is string s && s.Length == 0)
-                ? Arg(args, 0)
-                : input);
-
-        return r;
+    private static bool TryToDate(object? value, out DateTime date)
+    {
+        switch (value)
+        {
+            case DateTime dt:
+                date = dt;
+                return true;
+            case string s when s.Equals("Now", StringComparison.OrdinalIgnoreCase):
+                date = DateTime.Now;
+                return true;
+            case string s when s.Equals("Today", StringComparison.OrdinalIgnoreCase):
+                date = DateTime.Today;
+                return true;
+            case string s:
+                return DateTime.TryParse(s, CultureInfo.InvariantCulture, DateTimeStyles.None, out date)
+                    || DateTime.TryParse(s, CultureInfo.CurrentCulture, DateTimeStyles.None, out date);
+            default:
+                date = default;
+                return false;
+        }
     }
 
     // -----------------------------------------------------------------------
-    // English helpers
+    // English language helpers
     // -----------------------------------------------------------------------
 
     private static readonly Dictionary<string, string> Irregulars = new(StringComparer.OrdinalIgnoreCase)
@@ -450,10 +149,13 @@ public class LavaFilterRegistry
         ["tooth"] = "teeth",
         ["goose"] = "geese",
         ["mouse"] = "mice",
-        ["deacon"] = "deacons",
         ["staff"] = "staff",
         ["sheep"] = "sheep",
     };
+
+    private static readonly Dictionary<string, string> IrregularsReversed =
+        Irregulars.Where(kv => kv.Key != kv.Value)
+            .ToDictionary(kv => kv.Value, kv => kv.Key, StringComparer.OrdinalIgnoreCase);
 
     private static string Pluralize(string word)
     {
@@ -475,6 +177,32 @@ public class LavaFilterRegistry
             return word + "es";
         }
         return word + "s";
+    }
+
+    private static string Singularize(string word)
+    {
+        if (word.Length == 0)
+        {
+            return word;
+        }
+        if (IrregularsReversed.TryGetValue(word, out var irregular))
+        {
+            return MatchCase(word, irregular);
+        }
+        var lower = word.ToLowerInvariant();
+        if (lower.EndsWith("ies") && word.Length > 3)
+        {
+            return word[..^3] + "y";
+        }
+        if (lower.EndsWith("ches") || lower.EndsWith("shes") || lower.EndsWith("xes") || lower.EndsWith("zes") || lower.EndsWith("ses"))
+        {
+            return word[..^2];
+        }
+        if (lower.EndsWith("s") && !lower.EndsWith("ss"))
+        {
+            return word[..^1];
+        }
+        return word;
     }
 
     private static string MatchCase(string original, string replacement) =>
@@ -549,6 +277,18 @@ public class LavaFilterRegistry
             return head + last[..^1] + "ieth";
         }
         return head + last + "th";
+    }
+
+    private static string NumberToOrdinal(long n)
+    {
+        var suffix = (n % 100) is 11 or 12 or 13 ? "th" : (n % 10) switch
+        {
+            1 => "st",
+            2 => "nd",
+            3 => "rd",
+            _ => "th",
+        };
+        return n + suffix;
     }
 
     private static string ToRoman(int n)

@@ -158,12 +158,25 @@ public class LavaTemplate
         public override void Render(RenderContext context, StringBuilder sb)
         {
             var value = _collection.Evaluate(context);
-            if (value is not IEnumerable<object?> rawItems || value is string)
+            List<object?> items;
+            if (value is IDictionary<string, object?> dict)
+            {
+                // Iterating a dictionary (e.g. the result of GroupBy) yields
+                // {Key, Value} entries, matching Rock's PropertyToKeyValue pattern.
+                items = dict.Select(kv => (object?)new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["Key"] = kv.Key,
+                    ["Value"] = kv.Value,
+                }).ToList();
+            }
+            else if (value is IEnumerable<object?> rawItems && value is not string)
+            {
+                items = rawItems.ToList();
+            }
+            else
             {
                 return; // Nothing iterable; render nothing, like Liquid does.
             }
-
-            var items = rawItems.ToList();
             if (_reversed)
             {
                 items.Reverse();
@@ -359,6 +372,40 @@ public class LavaTemplate
                     return new IfNode(branches, elseBody);
                 }
 
+                case "raw":
+                {
+                    return new TextNode(ReadRawUntilEndRaw());
+                }
+
+                case "case":
+                {
+                    var subject = FilteredExpression.Parse(rest);
+                    var branches = new List<(List<FilteredExpression>, List<Node>)>();
+                    List<Node>? elseBody = null;
+
+                    // Text between {% case %} and the first {% when %} is discarded.
+                    var (_, term) = ParseBlock(new[] { "when", "else", "endcase" });
+
+                    while (term != null && FirstWord(term).Equals("when", StringComparison.OrdinalIgnoreCase))
+                    {
+                        var values = ParseWhenValues(term["when".Length..].Trim());
+                        var (body, next) = ParseBlock(new[] { "when", "else", "endcase" });
+                        branches.Add((values, body));
+                        term = next;
+                    }
+
+                    if (term != null && FirstWord(term).Equals("else", StringComparison.OrdinalIgnoreCase))
+                    {
+                        (elseBody, term) = ParseBlock(new[] { "endcase" });
+                    }
+
+                    if (term == null)
+                    {
+                        throw new LavaException("Missing {% endcase %}.");
+                    }
+                    return new CaseNode(subject, branches, elseBody);
+                }
+
                 case "for":
                 {
                     var t = new ExpressionTokenizer(rest);
@@ -400,11 +447,54 @@ public class LavaTemplate
                 default:
                     if (tagName.StartsWith("end", StringComparison.OrdinalIgnoreCase) ||
                         tagName.Equals("else", StringComparison.OrdinalIgnoreCase) ||
-                        tagName.Equals("elsif", StringComparison.OrdinalIgnoreCase))
+                        tagName.Equals("elsif", StringComparison.OrdinalIgnoreCase) ||
+                        tagName.Equals("when", StringComparison.OrdinalIgnoreCase))
                     {
                         throw new LavaException($"Unexpected {{% {tagName} %}} with no matching opening tag.");
                     }
-                    throw new LavaException($"Unknown tag {{% {tagName} %}}. Supported tags: assign, capture, comment, if, unless, for.");
+                    throw new LavaException($"Unknown tag {{% {tagName} %}}. Supported tags: assign, capture, comment, if, unless, for, case, raw.");
+            }
+        }
+
+        private static List<FilteredExpression> ParseWhenValues(string content)
+        {
+            // {% when 'a' %}, {% when 'a' or 'b' %}, {% when 'a', 'b' %}
+            var values = new List<FilteredExpression>();
+            var t = new ExpressionTokenizer(content);
+            values.Add(FilteredExpression.Parse(t));
+            while (t.TryConsume(TokenType.Comma) || t.TryConsumeIdentifier("or"))
+            {
+                values.Add(FilteredExpression.Parse(t));
+            }
+            if (t.Peek().Type != TokenType.End)
+            {
+                throw new LavaException($"Unexpected \"{t.Peek().Text}\" in {{% when %}}.");
+            }
+            return values;
+        }
+
+        private string ReadRawUntilEndRaw()
+        {
+            var start = _pos;
+            var search = _pos;
+            while (true)
+            {
+                var open = _source.IndexOf("{%", search, StringComparison.Ordinal);
+                if (open == -1)
+                {
+                    throw new LavaException("Missing {% endraw %}.");
+                }
+                var close = _source.IndexOf("%}", open + 2, StringComparison.Ordinal);
+                if (close == -1)
+                {
+                    throw new LavaException("Missing {% endraw %}.");
+                }
+                if (_source[(open + 2)..close].Trim().Equals("endraw", StringComparison.OrdinalIgnoreCase))
+                {
+                    _pos = close + 2;
+                    return _source[start..open];
+                }
+                search = open + 2;
             }
         }
 
@@ -416,6 +506,43 @@ public class LavaTemplate
                 end++;
             }
             return content[..end];
+        }
+    }
+
+    private class CaseNode : Node
+    {
+        private readonly FilteredExpression _subject;
+        private readonly List<(List<FilteredExpression> Values, List<Node> Body)> _branches;
+        private readonly List<Node>? _elseBody;
+
+        public CaseNode(FilteredExpression subject, List<(List<FilteredExpression>, List<Node>)> branches, List<Node>? elseBody)
+        {
+            _subject = subject;
+            _branches = branches;
+            _elseBody = elseBody;
+        }
+
+        public override void Render(RenderContext context, StringBuilder sb)
+        {
+            var subject = _subject.Evaluate(context);
+            foreach (var (values, body) in _branches)
+            {
+                if (values.Any(v => LavaValue.LooseEquals(subject, v.Evaluate(context))))
+                {
+                    foreach (var node in body)
+                    {
+                        node.Render(context, sb);
+                    }
+                    return;
+                }
+            }
+            if (_elseBody != null)
+            {
+                foreach (var node in _elseBody)
+                {
+                    node.Render(context, sb);
+                }
+            }
         }
     }
 

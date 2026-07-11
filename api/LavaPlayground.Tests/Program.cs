@@ -196,6 +196,101 @@ CheckError("stray endif", "{% endif %}", "no matching opening tag");
 CheckError("unterminated string", "{{ 'oops }}", "Unterminated string");
 CheckError("empty output", "{{ }}", "Empty output");
 
+// ---------------- New text filters ----------------
+Check("TruncateWords", "{{ 'the quick brown fox jumps' | TruncateWords:3 }}", "the quick brown…");
+Check("ReplaceFirst", "{{ 'pew pew' | ReplaceFirst:'pew','wow' }}", "wow pew");
+Check("ReplaceLast", "{{ 'pew pew' | ReplaceLast:'pew','wow' }}", "pew wow");
+Check("RemoveFirst", "{{ 'a-b-c' | RemoveFirst:'-' }}", "ab-c");
+Check("Strip", "{{ '  hi  ' | Strip }}", "hi");
+Check("StripHtml", "{{ '<b>Big</b> news' | StripHtml }}", "Big news");
+Check("NewlineToBr", "{% capture t %}a\nb{% endcapture %}{{ t | NewlineToBr }}", "a<br/>b");
+Check("Singularize", "{{ 'ministries' | Singularize }}", "ministry");
+Check("Singularize people", "{{ 'people' | Singularize }}", "person");
+Check("ToQuantity", "{{ 'phone' | ToQuantity:3 }}", "3 phones");
+Check("EscapeOnce", "{{ '&lt;b&gt; & x' | EscapeOnce }}", "&lt;b&gt; &amp; x");
+Check("UrlEncode", "{{ 'a b&c' | UrlEncode }}", "a%20b%26c");
+Check("UrlDecode", "{{ 'a%20b' | UrlDecode }}", "a b");
+Check("ObfuscateEmail", "{{ 'sam@example.com' | ObfuscateEmail }}", "sxxxxx@example.com");
+Check("Linkify", "{{ 'see https://rockrms.com now' | Linkify }}",
+    "see <a href=\"https://rockrms.com\">https://rockrms.com</a> now");
+Check("FromMarkdown", "{{ '**Big** news' | FromMarkdown }}", "<p><strong>Big</strong> news</p>");
+Check("ReadTime short", "{{ 'a few words here' | ReadTime }}", "1 min");
+Check("RegExMatch", "{{ '555-1234' | RegExMatch:'\\d\\d\\d-\\d\\d\\d\\d' }}", "true");
+Check("RegExMatchValue", "{{ 'Room 214 is open' | RegExMatchValue:'\\d+' }}", "214");
+Check("RegExMatchValues", "{{ 'a1 b2 c3' | RegExMatchValues:'\\d' | Join:',' }}", "1,2,3");
+Check("RegExReplace", "{{ 'a1b2' | RegExReplace:'\\d','-' }}", "a-b-");
+
+// ---------------- New numeric filters ----------------
+Check("Abs", "{{ -17 | Abs }}", "17");
+Check("Round to places", "{{ 3.14159 | Round:2 }}", "3.14");
+Check("Round whole", "{{ 4.5 | Round }}", "5");
+Check("AtLeast", "{{ 3 | AtLeast:5 }}", "5");
+Check("AtMost", "{{ 9 | AtMost:5 }}", "5");
+Check("DividedBy precision", "{{ 12.434 | DividedBy:6,2 }}", "2.07");
+Check("FormatAsCurrency", "{{ 1234.5 | FormatAsCurrency }}", "$1,234.50");
+
+// ---------------- New date filters ----------------
+Check("DateAdd days", "{{ '2026-07-11' | DateAdd:3,'d' | Date:'M/d/yyyy' }}", "7/14/2026");
+Check("DateAdd months", "{{ '2026-07-11' | DateAdd:2,'M' | Date:'M/d/yyyy' }}", "9/11/2026");
+Check("DateDiff days", "{{ '2026-01-01' | DateDiff:'2026-01-31','d' }}", "30");
+Check("DateDiff months", "{{ '2026-01-15' | DateDiff:'2026-04-01','M' }}", "3");
+Check("DaysInMonth", "{{ '2026-02-14' | DaysInMonth }}", "28");
+Check("SundayDate", "{{ '2026-07-11' | SundayDate | Date:'M/d/yyyy' }}", "7/12/2026");
+Check("ToMidnight", "{{ '2026-07-11 14:30' | ToMidnight | Date:'h:mm tt' }}", "12:00 AM");
+Check("HumanizeTimeSpan", "{{ '2026-07-01' | HumanizeTimeSpan:'2026-08-02',2 }}", "4 weeks, 4 days");
+Check("AsDateTime chain", "{{ '2026-12-25' | AsDateTime | Date:'MMM d' }}", "Dec 25");
+
+// ---------------- New collection filters ----------------
+Check("Select dotted path", "{{ Person.Groups | Select:'Name' | First }}", "Young Pros");
+Check("Sort desc", "{{ Campuses | Sort:'Attendance','desc' | Map:'Name' | First }}", "The Loop");
+Check("Index", "{% assign g = Person.Groups | Index:1 %}{{ g.Name }}", "Check-In Team");
+Check("Take", "{{ Campuses | Take:2 | Map:'Name' | Join:',' }}", "The Loop,Cypress");
+Check("Skip", "{{ Campuses | Skip:2 | Map:'Name' | Join:',' }}", "Downtown");
+Check("Sum property", "{{ Campuses | Sum:'Attendance' }}", "4950");
+Check("Sum plain", "{{ '1,2,3' | Split:',' | Sum }}", "6");
+Check("Compact", "{{ 'a,,b' | Split:',' | Compact | Size }}", "2");
+Check("Concat", "{% assign both = Campuses | Concat:Person.Groups %}{{ both | Size }}", "6");
+Check("Contains true", "{{ 'a,b' | Split:',' | Contains:'b' }}", "true");
+Check("Distinct by prop", "{{ Campuses | Distinct:'Name' | Size }}", "3");
+Check("RemoveFromArray", "{{ 'a,b,a' | Split:',' | RemoveFromArray:'a' | Join:',' }}", "b");
+Check("AddToArray from empty", "{% assign ids = '' %}{% assign ids = ids | AddToArray:5 %}{{ ids | Size }}", "1");
+Check("GroupBy + iterate",
+    "{% assign byRole = Person.Groups | GroupBy:'Role' %}{% for entry in byRole %}{% assign kv = entry | PropertyToKeyValue %}{{ kv.Key }}={{ kv.Value | Size }};{% endfor %}",
+    "Leader=1;Member=2;");
+Check("AddToDictionary + AllKeys",
+    "{% assign d = '' | AddToDictionary:'a',1 %}{% assign d = d | AddToDictionary:'b',2 %}{{ d | AllKeysFromDictionary | Join:',' }}",
+    "a,b");
+
+// ---------------- Type coercion ----------------
+Check("AsBoolean", "{{ 'Yes' | AsBoolean }}", "true");
+Check("ToJSON + FromJSON roundtrip",
+    "{% capture j %}{\"Name\":\"Rock\"}{% endcapture %}{% assign o = j | FromJSON %}{{ o.Name }}", "Rock");
+Check("ToString", "{{ 42 | ToString | Size }}", "2");
+
+// ---------------- Color filters ----------------
+Check("Darken", "{{ '#ffffff' | Darken:'50%' }}", "#808080");
+Check("Lighten black", "{{ '#000000' | Lighten:'50%' }}", "#808080");
+Check("Grayscale", "{{ '#ff0000' | Grayscale }}", "#808080");
+Check("FadeOut", "{{ '#ff0000' | FadeOut:'50%' }}", "rgba(255, 0, 0, 0.5)");
+Check("Mix", "{{ '#000000' | Mix:'#ffffff','50%' }}", "#808080");
+Check("Tint", "{{ '#000000' | Tint:'100%' }}", "#ffffff");
+Check("Shade", "{{ '#ffffff' | Shade:'100%' }}", "#000000");
+Check("named color", "{{ 'navy' | Lighten:'0%' }}", "#000080");
+Check("rgb() input", "{{ 'rgb(255, 0, 0)' | Grayscale }}", "#808080");
+
+// ---------------- case / raw tags ----------------
+Check("case match", "{% case Person.NickName %}{% when 'Bob' %}b{% when 'Sam' %}s{% else %}x{% endcase %}", "s");
+Check("case else", "{% case 99 %}{% when 1 %}a{% else %}z{% endcase %}", "z");
+Check("case multi-value when", "{% case 2 %}{% when 1 or 2 %}hit{% endcase %}", "hit");
+Check("raw", "{% raw %}{{ not.rendered }}{% endraw %}", "{{ not.rendered }}");
+CheckError("missing endcase", "{% case 1 %}{% when 1 %}a", "endcase");
+CheckError("missing endraw", "{% raw %}oops", "endraw");
+
+// ---------------- Dictionary iteration ----------------
+Check("for over dictionary",
+    "{% assign d = '' | AddToDictionary:'x',1 %}{% for entry in d %}{{ entry.Key }}:{{ entry.Value }}{% endfor %}",
+    "x:1");
+
 // ---------------- Report ----------------
 Console.WriteLine($"\n{passed} passed, {failed} failed");
 foreach (var failure in failures)

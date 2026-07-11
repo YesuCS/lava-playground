@@ -3,20 +3,28 @@
 Walks a template, finds {{ output }} and {% tag %} markers, and reports
 issues with line/column positions:
 
-  errors    things the renderer will reject (unclosed markers, bad nesting)
+  errors    things the local renderer will reject (unclosed markers, bad nesting)
   warnings  things that will probably not do what you meant
-  info      style nudges (filter casing, empty bodies)
+  info      style nudges, plus "this needs a real Rock server" notices
 """
 
 from __future__ import annotations
 
 import difflib
 import re
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, asdict
 
-from .known import KNOWN_FILTERS, BLOCK_TAGS, END_TAGS, BRANCH_TAGS, SIMPLE_TAGS, ALL_TAGS
+from . import known
+from .known import (
+    BLOCK_TAGS,
+    BRANCH_TAGS,
+    END_TAGS,
+    REMOTE_ONLY_BLOCK_TAGS,
+    REMOTE_ONLY_FILTERS,
+    SIMPLE_TAGS,
+)
 
-_KNOWN_LOWER = {f.lower(): f for f in KNOWN_FILTERS}
+ALL_LOCAL_TAGS = set(BLOCK_TAGS) | set(END_TAGS) | BRANCH_TAGS | SIMPLE_TAGS
 
 MARKER_RE = re.compile(r"\{\{(.*?)\}\}|\{%(.*?)%\}", re.DOTALL)
 OPEN_OUTPUT_RE = re.compile(r"\{\{")
@@ -49,6 +57,7 @@ class _OpenBlock:
     line: int
     col: int
     saw_else: bool = False
+    remote_only: bool = False
 
 
 def _position(source: str, index: int) -> tuple[int, int]:
@@ -89,24 +98,34 @@ def _check_unclosed_markers(source: str) -> list[Issue]:
     return issues
 
 
+def _branch_holder_tags(branch: str) -> tuple[str, ...]:
+    """Which block tags a branch tag may live inside."""
+    if branch == "when":
+        return ("case",)
+    if branch == "elsif":
+        return ("if", "unless")
+    return ("if", "unless", "case")  # else
+
+
 def _check_structure(source: str) -> list[Issue]:
     issues: list[Issue] = []
     stack: list[_OpenBlock] = []
-    in_comment_depth = 0
+    literal_depth = 0        # inside {% comment %} or {% raw %}
+    literal_tag = ""         # which literal block we're inside
 
     for m in MARKER_RE.finditer(source):
         output_content, tag_content = m.group(1), m.group(2)
         line, col = _position(source, m.start())
 
-        if in_comment_depth > 0:
-            # Inside {% comment %} everything is ignored except comment nesting.
+        if literal_depth > 0:
+            # Inside comment/raw everything is ignored except block nesting.
             if tag_content is not None:
                 word = tag_content.strip().split(" ")[0].lower() if tag_content.strip() else ""
-                if word == "comment":
-                    in_comment_depth += 1
-                elif word == "endcomment":
-                    in_comment_depth -= 1
-                    if in_comment_depth == 0 and stack and stack[-1].tag == "comment":
+                if word == literal_tag:
+                    literal_depth += 1
+                elif word == f"end{literal_tag}":
+                    literal_depth -= 1
+                    if literal_depth == 0 and stack and stack[-1].tag == literal_tag:
                         stack.pop()
             continue
 
@@ -122,19 +141,11 @@ def _check_structure(source: str) -> list[Issue]:
         word = content.split(" ")[0].split("\t")[0]
         tag = word.lower()
 
-        if tag not in ALL_TAGS:
-            match = difflib.get_close_matches(tag, list(ALL_TAGS), n=1)
-            issues.append(Issue(
-                line, col, "error", "unknown-tag",
-                f"Unknown tag {{% {word} %}}.",
-                suggestion=f"Did you mean {{% {match[0]} %}}?" if match else None,
-            ))
-            continue
-
         if tag in BLOCK_TAGS:
             stack.append(_OpenBlock(tag, line, col))
-            if tag == "comment":
-                in_comment_depth = 1
+            if tag in ("comment", "raw"):
+                literal_depth = 1
+                literal_tag = tag
             if tag == "capture" and len(content.split()) < 2:
                 issues.append(Issue(
                     line, col, "error", "capture-name",
@@ -142,18 +153,29 @@ def _check_structure(source: str) -> list[Issue]:
                 ))
             continue
 
+        if tag in REMOTE_ONLY_BLOCK_TAGS:
+            stack.append(_OpenBlock(tag, line, col, remote_only=True))
+            issues.append(Issue(
+                line, col, "info", "remote-only-tag",
+                f"{{% {tag} %}} is a Rock server command; it renders only in "
+                f"remote mode, on an endpoint where the command is enabled.",
+            ))
+            continue
+
         if tag in BRANCH_TAGS:
-            holder = next((b for b in reversed(stack) if b.tag in ("if", "unless")), None)
+            valid_holders = _branch_holder_tags(tag)
+            holder = next((b for b in reversed(stack) if b.tag in valid_holders), None)
             if holder is None:
                 issues.append(Issue(
                     line, col, "error", "orphan-branch",
-                    f"{{% {tag} %}} outside of an {{% if %}} block.",
+                    f"{{% {tag} %}} outside of "
+                    + (" an {% if %} block." if tag != "when" else " a {% case %} block."),
                 ))
             elif tag == "else":
                 if holder.saw_else:
                     issues.append(Issue(
                         line, col, "error", "duplicate-else",
-                        "This {% if %} already has an {% else %}.",
+                        f"This {{% {holder.tag} %}} already has an {{% else %}}.",
                     ))
                 holder.saw_else = True
             elif tag == "elsif" and holder.saw_else:
@@ -163,8 +185,10 @@ def _check_structure(source: str) -> list[Issue]:
                 ))
             continue
 
-        if tag in END_TAGS:
-            expected_opener = END_TAGS[tag]
+        expected_opener = END_TAGS.get(tag)
+        if expected_opener is None and tag.startswith("end") and tag[3:] in REMOTE_ONLY_BLOCK_TAGS:
+            expected_opener = tag[3:]
+        if expected_opener is not None:
             if not stack:
                 issues.append(Issue(
                     line, col, "error", "unmatched-end",
@@ -172,9 +196,10 @@ def _check_structure(source: str) -> list[Issue]:
                 ))
             elif stack[-1].tag != expected_opener:
                 open_block = stack[-1]
+                open_closer = BLOCK_TAGS.get(open_block.tag, f"end{open_block.tag}")
                 issues.append(Issue(
                     line, col, "error", "mismatched-end",
-                    f"Expected {{% {BLOCK_TAGS[open_block.tag]} %}} to close the "
+                    f"Expected {{% {open_closer} %}} to close the "
                     f"{{% {open_block.tag} %}} on line {open_block.line}, "
                     f"but found {{% {tag} %}}.",
                 ))
@@ -183,16 +208,28 @@ def _check_structure(source: str) -> list[Issue]:
                 stack.pop()
             continue
 
-        if tag == "assign" and "=" not in content:
-            issues.append(Issue(
-                line, col, "error", "assign-equals",
-                '{% assign %} is missing "=". Use: {% assign name = value %}.',
-            ))
+        if tag == "assign":
+            if "=" not in content:
+                issues.append(Issue(
+                    line, col, "error", "assign-equals",
+                    '{% assign %} is missing "=". Use: {% assign name = value %}.',
+                ))
+            else:
+                issues.extend(_check_output(content.split("=", 1)[1], line, col))
+            continue
+
+        match = difflib.get_close_matches(tag, list(ALL_LOCAL_TAGS | REMOTE_ONLY_BLOCK_TAGS), n=1)
+        issues.append(Issue(
+            line, col, "error", "unknown-tag",
+            f"Unknown tag {{% {word} %}}.",
+            suggestion=f"Did you mean {{% {match[0]} %}}?" if match else None,
+        ))
 
     for block in stack:
+        closer = BLOCK_TAGS.get(block.tag, f"end{block.tag}")
         issues.append(Issue(
             block.line, block.col, "error", "unclosed-block",
-            f"{{% {block.tag} %}} is never closed. Add {{% {BLOCK_TAGS[block.tag]} %}}.",
+            f"{{% {block.tag} %}} is never closed. Add {{% {closer} %}}.",
         ))
 
     return issues
@@ -209,12 +246,23 @@ def _check_output(content: str, line: int, col: int) -> list[Issue]:
         ))
         return issues
 
+    known_filters = known.KNOWN_FILTERS
+    known_lower = {f.lower(): f for f in known_filters}
+    remote_lower = {f.lower(): f for f in REMOTE_ONLY_FILTERS}
+
     scannable = STRING_RE.sub("''", content)
     for fm in FILTER_NAME_RE.finditer(scannable):
         name = fm.group(1)
-        if name in KNOWN_FILTERS:
+        if name in known_filters:
             continue
-        canonical = _KNOWN_LOWER.get(name.lower())
+        if (remote_canonical := remote_lower.get(name.lower())) is not None:
+            issues.append(Issue(
+                line, col, "info", "remote-only-filter",
+                f'"{remote_canonical}" is a Rock entity filter; it renders only '
+                f"in remote mode, on a connected Rock server.",
+            ))
+            continue
+        canonical = known_lower.get(name.lower())
         if canonical:
             issues.append(Issue(
                 line, col, "info", "filter-casing",
@@ -222,7 +270,8 @@ def _check_output(content: str, line: int, col: int) -> list[Issue]:
                 suggestion=f'Use "{canonical}".',
             ))
         else:
-            match = difflib.get_close_matches(name, list(KNOWN_FILTERS), n=1, cutoff=0.55)
+            match = difflib.get_close_matches(
+                name, list(known_filters | REMOTE_ONLY_FILTERS), n=1, cutoff=0.55)
             issues.append(Issue(
                 line, col, "error", "unknown-filter",
                 f'Unknown filter "{name}".',

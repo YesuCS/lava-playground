@@ -16,7 +16,9 @@ A three-language playground for [Rock RMS](https://www.rockrms.com/) **Lava** te
 
 **Shortcodes.** `{[ alert ]}`, `{[ panel ]}`, `{[ button ]}`, `{[ youtube ]}`, `{[ vimeo ]}`, and `{[ accordion ]}` / `{[ kpis ]}` with `[[ item ]]` child blocks. Parameters accept embedded Lava, and block content renders as full Lava.
 
-**A linter that knows Rock.** The Python service reports unclosed blocks with the line that opened them, mismatched end tags, orphaned `else`/`when`, unknown filters and shortcodes with did-you-mean suggestions, and, for server-side commands like `{% sql %}` or entity filters like `Attribute` and `PersonById`, an info notice that they need a connected Rock server rather than a false "unknown" error. The known-filter list self-syncs from the render API at startup.
+**A linter that knows Rock, and knows which engine you're on.** The Python service reports unclosed blocks with the line that opened them, mismatched end tags, orphaned `else`/`when`, and unknown filters and shortcodes with did-you-mean suggestions. It learns the engine's capabilities from the engine itself at startup (`GET /api/filters` and `GET /api/capabilities`), so nothing is hand-duplicated. Lint is mode-aware: in local mode, server commands like `{% sql %}` get a "switch to your Rock server" notice; in remote mode those notices disappear and unknown names become soft warnings, because your Rock server has filters and custom shortcodes the local engine can't know about. Structure errors (unclosed blocks, mismatched ends) stay errors in both modes.
+
+**Whitespace control.** `{{- -}}` and `{%- -%}` trim surrounding whitespace, matching Rock's Fluid engine.
 
 **Learn mode.** Fourteen lessons from your first `{{ output }}` through entity commands and shortcodes to a capstone. Each lesson has a goal, a Check button that validates both your template and its rendered output, and progress that persists between visits.
 
@@ -71,10 +73,10 @@ cd frontend && npm install && npm run dev
 ## Tests
 
 ```bash
-# C# engine: 195 assertions in a dependency-free console harness
+# C# engine: 201 assertions in a dependency-free console harness
 dotnet run --project api/LavaPlayground.Tests
 
-# Python linter (40 tests)
+# Python linter (45 tests)
 cd linter && pip install -r requirements-dev.txt && python -m pytest tests
 
 # Frontend typecheck + build

@@ -197,3 +197,27 @@ def test_unclosed_shortcode_marker():
 
 def test_shortcode_inside_raw_ignored():
     assert lint("{% raw %}{[ bogus ]}{% endraw %}") == []
+
+
+def test_whitespace_control_dashes():
+    assert lint("{%- if true -%}{{- 'x' | Upcase -}}{%- endif -%}") == []
+
+
+def test_rock_mode_suppresses_remote_only_info():
+    assert lint("{% sql %}SELECT 1{% endsql %}", engine="rock") == []
+    assert lint("{{ CurrentPerson | Attribute:'BaptismDate' }}", engine="rock") == []
+
+
+def test_rock_mode_downgrades_unknown_filter():
+    issues = lint("{{ 'x' | SomeCustomFilter }}", engine="rock")
+    assert issues[0].severity == "warning"
+    assert issues[0].code == "unknown-filter"
+
+
+def test_rock_mode_allows_custom_shortcodes():
+    assert lint("{[ mychurchcard title:'x' ]}", engine="rock") == []
+
+
+def test_rock_mode_still_catches_structure_errors():
+    assert "unclosed-block" in [i.code for i in lint("{% if true %}oops", engine="rock")]
+    assert "unclosed-output" in [i.code for i in lint("{{ Person.NickName", engine="rock")]

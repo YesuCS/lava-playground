@@ -19,7 +19,6 @@ from .known import (
     BLOCK_SHORTCODES,
     BLOCK_TAGS,
     BRANCH_TAGS,
-    END_TAGS,
     ENTITY_BLOCK_TAGS,
     INLINE_SHORTCODES,
     REMOTE_ONLY_BLOCK_TAGS,
@@ -27,8 +26,18 @@ from .known import (
     SIMPLE_TAGS,
 )
 
-ALL_LOCAL_TAGS = set(BLOCK_TAGS) | set(END_TAGS) | BRANCH_TAGS | SIMPLE_TAGS | ENTITY_BLOCK_TAGS
-ALL_SHORTCODES = BLOCK_SHORTCODES | INLINE_SHORTCODES
+def _all_local_tags() -> set[str]:
+    """Computed at call time so live capability syncs are reflected."""
+    return set(BLOCK_TAGS) | set(_end_tags()) | BRANCH_TAGS | SIMPLE_TAGS | ENTITY_BLOCK_TAGS
+
+
+def _end_tags() -> dict[str, str]:
+    return {closer: opener for opener, closer in BLOCK_TAGS.items()}
+
+
+def _all_shortcodes() -> set[str]:
+    return BLOCK_SHORTCODES | INLINE_SHORTCODES
+
 
 MARKER_RE = re.compile(r"\{\{(.*?)\}\}|\{%(.*?)%\}|\{\[(.*?)\]\}", re.DOTALL)
 OPEN_OUTPUT_RE = re.compile(r"\{\{")
@@ -72,12 +81,26 @@ def _position(source: str, index: int) -> tuple[int, int]:
     return line, col
 
 
-def lint(source: str) -> list[Issue]:
+def lint(source: str, engine: str = "local") -> list[Issue]:
+    """Lints a template. engine='rock' relaxes the checks that only apply
+    to the local engine: remote-only notices disappear (the commands are
+    real on a Rock server) and unknown names become warnings, since a Rock
+    instance has filters, commands, and custom shortcodes we can't know."""
     issues: list[Issue] = []
     issues.extend(_check_unclosed_markers(source))
-    issues.extend(_check_structure(source))
+    issues.extend(_check_structure(source, engine))
     issues.sort(key=lambda i: (i.line, i.col))
     return issues
+
+
+def _strip_ws_control(content: str) -> str:
+    """Removes {%- -%} / {{- -}} whitespace-control dashes."""
+    content = content.strip()
+    if content.startswith("-"):
+        content = content[1:]
+    if content.endswith("-") and len(content) > 1:
+        content = content[:-1]
+    return content.strip()
 
 
 def _check_unclosed_markers(source: str) -> list[Issue]:
@@ -112,7 +135,7 @@ def _branch_holder_tags(branch: str) -> tuple[str, ...]:
     return ("if", "unless", "case")  # else
 
 
-def _check_structure(source: str) -> list[Issue]:
+def _check_structure(source: str, engine: str = "local") -> list[Issue]:
     issues: list[Issue] = []
     stack: list[_OpenBlock] = []
     shortcode_stack: list[_OpenBlock] = []
@@ -126,7 +149,8 @@ def _check_structure(source: str) -> list[Issue]:
         if literal_depth > 0:
             # Inside comment/raw everything is ignored except block nesting.
             if tag_content is not None:
-                word = tag_content.strip().split(" ")[0].lower() if tag_content.strip() else ""
+                stripped = _strip_ws_control(tag_content)
+                word = stripped.split(" ")[0].lower() if stripped else ""
                 if word == literal_tag:
                     literal_depth += 1
                 elif word == f"end{literal_tag}":
@@ -136,14 +160,14 @@ def _check_structure(source: str) -> list[Issue]:
             continue
 
         if output_content is not None:
-            issues.extend(_check_output(output_content, line, col))
+            issues.extend(_check_output(_strip_ws_control(output_content), line, col, engine))
             continue
 
         if shortcode_content is not None:
-            issues.extend(_check_shortcode(shortcode_content.strip(), line, col, shortcode_stack))
+            issues.extend(_check_shortcode(shortcode_content.strip(), line, col, shortcode_stack, engine))
             continue
 
-        content = tag_content.strip()
+        content = _strip_ws_control(tag_content)
         if not content:
             issues.append(Issue(line, col, "error", "empty-tag", "Empty tag: {% %} has no content."))
             continue
@@ -169,11 +193,12 @@ def _check_structure(source: str) -> list[Issue]:
 
         if tag in REMOTE_ONLY_BLOCK_TAGS:
             stack.append(_OpenBlock(tag, line, col, remote_only=True))
-            issues.append(Issue(
-                line, col, "info", "remote-only-tag",
-                f"{{% {tag} %}} is a Rock server command; it renders only in "
-                f"remote mode, on an endpoint where the command is enabled.",
-            ))
+            if engine != "rock":
+                issues.append(Issue(
+                    line, col, "info", "remote-only-tag",
+                    f"{{% {tag} %}} is a Rock server command; switch to your Rock "
+                    f"server (remote mode) to run it.",
+                ))
             continue
 
         if tag in BRANCH_TAGS:
@@ -199,7 +224,7 @@ def _check_structure(source: str) -> list[Issue]:
                 ))
             continue
 
-        expected_opener = END_TAGS.get(tag)
+        expected_opener = _end_tags().get(tag)
         if expected_opener is None and tag.startswith("end") and tag[3:] in (REMOTE_ONLY_BLOCK_TAGS | ENTITY_BLOCK_TAGS):
             expected_opener = tag[3:]
         if expected_opener is not None:
@@ -232,15 +257,22 @@ def _check_structure(source: str) -> list[Issue]:
                     '{% assign %} is missing "=". Use: {% assign name = value %}.',
                 ))
             else:
-                issues.extend(_check_output(content.split("=", 1)[1], line, col))
+                issues.extend(_check_output(content.split("=", 1)[1], line, col, engine))
             continue
 
-        match = difflib.get_close_matches(tag, list(ALL_LOCAL_TAGS | REMOTE_ONLY_BLOCK_TAGS), n=1)
-        issues.append(Issue(
-            line, col, "error", "unknown-tag",
-            f"Unknown tag {{% {word} %}}.",
-            suggestion=f"Did you mean {{% {match[0]} %}}?" if match else None,
-        ))
+        match = difflib.get_close_matches(tag, list(_all_local_tags() | REMOTE_ONLY_BLOCK_TAGS), n=1)
+        if engine == "rock":
+            issues.append(Issue(
+                line, col, "warning", "unknown-tag",
+                f"{{% {word} %}} is not a tag the local engine knows; your Rock server may still support it.",
+                suggestion=f"Did you mean {{% {match[0]} %}}?" if match else None,
+            ))
+        else:
+            issues.append(Issue(
+                line, col, "error", "unknown-tag",
+                f"Unknown tag {{% {word} %}}.",
+                suggestion=f"Did you mean {{% {match[0]} %}}?" if match else None,
+            ))
 
     for block in stack:
         closer = BLOCK_TAGS.get(block.tag, f"end{block.tag}")
@@ -258,7 +290,7 @@ def _check_structure(source: str) -> list[Issue]:
     return issues
 
 
-def _check_shortcode(content: str, line: int, col: int, stack: list[_OpenBlock]) -> list[Issue]:
+def _check_shortcode(content: str, line: int, col: int, stack: list[_OpenBlock], engine: str = "local") -> list[Issue]:
     if not content:
         return [Issue(line, col, "error", "empty-shortcode", "Empty shortcode: {[ ]} has no name.")]
 
@@ -269,11 +301,16 @@ def _check_shortcode(content: str, line: int, col: int, stack: list[_OpenBlock])
         if stack and stack[-1].tag == opener:
             stack.pop()
             return []
-        if opener in ALL_SHORTCODES:
+        if opener in _all_shortcodes():
             return [Issue(
                 line, col, "error", "unmatched-end-shortcode",
                 f"{{[ {name} ]}} has no matching {{[ {opener} ]}}.",
             )]
+        if engine == "rock":
+            # Probably closing a custom shortcode defined on the server.
+            if stack and stack[-1].tag == opener:
+                stack.pop()
+            return []
         return [Issue(line, col, "error", "unknown-shortcode", f"Unknown shortcode {{[ {name} ]}}.")]
 
     if name in BLOCK_SHORTCODES:
@@ -282,7 +319,11 @@ def _check_shortcode(content: str, line: int, col: int, stack: list[_OpenBlock])
     if name in INLINE_SHORTCODES:
         return []
 
-    match = difflib.get_close_matches(name, list(ALL_SHORTCODES), n=1)
+    if engine == "rock":
+        # Rock servers define their own shortcodes; don't cry wolf.
+        return []
+
+    match = difflib.get_close_matches(name, list(_all_shortcodes()), n=1)
     return [Issue(
         line, col, "error", "unknown-shortcode",
         f"Unknown shortcode {{[ {name} ]}}.",
@@ -290,7 +331,7 @@ def _check_shortcode(content: str, line: int, col: int, stack: list[_OpenBlock])
     )]
 
 
-def _check_output(content: str, line: int, col: int) -> list[Issue]:
+def _check_output(content: str, line: int, col: int, engine: str = "local") -> list[Issue]:
     issues: list[Issue] = []
     stripped = content.strip()
 
@@ -311,11 +352,12 @@ def _check_output(content: str, line: int, col: int) -> list[Issue]:
         if name in known_filters:
             continue
         if (remote_canonical := remote_lower.get(name.lower())) is not None:
-            issues.append(Issue(
-                line, col, "info", "remote-only-filter",
-                f'"{remote_canonical}" is a Rock entity filter; it renders only '
-                f"in remote mode, on a connected Rock server.",
-            ))
+            if engine != "rock":
+                issues.append(Issue(
+                    line, col, "info", "remote-only-filter",
+                    f'"{remote_canonical}" is a Rock entity filter; switch to your '
+                    f"Rock server (remote mode) to run it.",
+                ))
             continue
         canonical = known_lower.get(name.lower())
         if canonical:
@@ -323,6 +365,11 @@ def _check_output(content: str, line: int, col: int) -> list[Issue]:
                 line, col, "info", "filter-casing",
                 f'Filter "{name}" works, but Rock convention is PascalCase.',
                 suggestion=f'Use "{canonical}".',
+            ))
+        elif engine == "rock":
+            issues.append(Issue(
+                line, col, "warning", "unknown-filter",
+                f'"{name}" is not a filter the local engine knows; your Rock server may still support it.',
             ))
         else:
             match = difflib.get_close_matches(

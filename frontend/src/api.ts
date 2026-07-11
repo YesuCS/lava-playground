@@ -87,11 +87,11 @@ export async function fetchSampleContext(): Promise<unknown> {
   return response.json()
 }
 
-export async function lintTemplate(template: string): Promise<LintResponse> {
+export async function lintTemplate(template: string, engine: Engine = 'local'): Promise<LintResponse> {
   const response = await fetch('/lint', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ template }),
+    body: JSON.stringify({ template, engine }),
   })
   if (!response.ok) throw new Error(`Lint API returned ${response.status}`)
   return response.json()

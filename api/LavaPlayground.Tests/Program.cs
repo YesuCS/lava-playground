@@ -398,6 +398,17 @@ Check("tablerow",
     "{% tablerow c in Campuses cols:2 %}{{ c.Name }}{% endtablerow %}",
     "<tr class=\"row1\"><td class=\"col1\">The Loop</td><td class=\"col2\">Cypress</td></tr><tr class=\"row2\"><td class=\"col1\">Downtown</td></tr>");
 
+// ---------------- Whitespace control ----------------
+Check("trim after tag", "a {%- assign x = 1 -%} b{{ x }}", "ab1");
+Check("trim around output", "a   {{- 'B' -}}   c", "aBc");
+Check("trim in loop keeps output tight",
+    "{% for c in Campuses -%}\n  {{ c.Name }}\n{%- endfor %}",
+    "The LoopCypressDowntown");
+Check("trim before endif",
+    "{% if true %}yes   {%- endif %}!", "yes!");
+Check("negative number still works", "{{ -5 | Abs }}", "5");
+Check("plain markers unaffected", "a {{ 'b' }} c", "a b c");
+
 // ---------------- WithFallback + comment semantics ----------------
 Check("WithFallback with value", "{{ Person.NickName | WithFallback:'Hi ',' friend' }}", "Hi Sam");
 Check("WithFallback empty", "{{ Person.MiddleName | WithFallback:'Hi ','friend' }}", "friend");

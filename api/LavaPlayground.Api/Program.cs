@@ -40,6 +40,8 @@ app.MapGet("/api/sample-context", () => Results.Content(sampleContextJson, "appl
 
 app.MapGet("/api/filters", () => filters.All);
 
+app.MapGet("/api/capabilities", LavaCapabilities.Describe);
+
 app.MapPost("/api/render", (RenderRequest request) =>
 {
     if (string.IsNullOrEmpty(request.Template))

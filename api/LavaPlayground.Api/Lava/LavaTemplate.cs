@@ -53,8 +53,9 @@ public class LavaTemplate
 
     private class TextNode : Node
     {
-        private readonly string _text;
+        private string _text;
         public TextNode(string text) => _text = text;
+        public void TrimEnd() => _text = _text.TrimEnd();
         public override void Render(RenderContext context, StringBuilder sb) => sb.Append(_text);
     }
 
@@ -223,7 +224,63 @@ public class LavaTemplate
         private readonly string _source;
         private int _pos;
 
+        // Set by a -%} / -}} marker: the next text segment gets TrimStart'd.
+        private bool _trimNextLeading;
+
         public Parser(string source) => _source = source;
+
+        /// <summary>
+        /// Extracts marker content between the given offsets, handling
+        /// whitespace-control dashes ({{- -}} and {%- -%}).
+        /// </summary>
+        private (string Content, bool TrimBefore, bool TrimAfter) ExtractMarkerContent(int start, int end)
+        {
+            var raw = _source[start..end];
+            var trimBefore = raw.StartsWith('-');
+            var trimAfter = raw.Length > (trimBefore ? 1 : 0) && raw.EndsWith('-');
+            if (trimBefore)
+            {
+                raw = raw[1..];
+            }
+            if (trimAfter)
+            {
+                raw = raw[..^1];
+            }
+            return (raw.Trim(), trimBefore, trimAfter);
+        }
+
+        private void AddTextBeforeMarker(List<Node> nodes, int markerStart, bool trimBefore)
+        {
+            var text = TakeText(_pos, markerStart);
+            if (trimBefore)
+            {
+                text = text.TrimEnd();
+                TrimLastText(nodes); // also handles markers separated only by earlier nodes
+            }
+            if (text.Length > 0)
+            {
+                nodes.Add(new TextNode(text));
+            }
+        }
+
+        private string TakeText(int from, int to)
+        {
+            var text = _source[from..to];
+            if (_trimNextLeading)
+            {
+                text = text.TrimStart();
+                _trimNextLeading = false;
+            }
+            return text;
+        }
+
+        private static void TrimLastText(List<Node> nodes)
+        {
+            if (nodes.Count > 0 && nodes[^1] is TextNode text)
+            {
+                text.TrimEnd();
+            }
+        }
 
         /// <summary>
         /// Parses nodes until one of the terminator tags (e.g. "endif", "else")
@@ -244,18 +301,22 @@ public class LavaTemplate
 
                 if (next == -1)
                 {
-                    nodes.Add(new TextNode(_source[_pos..]));
+                    var tail = TakeText(_pos, _source.Length);
+                    if (tail.Length > 0)
+                    {
+                        nodes.Add(new TextNode(tail));
+                    }
                     _pos = _source.Length;
                     break;
                 }
 
-                if (next > _pos)
-                {
-                    nodes.Add(new TextNode(_source[_pos..next]));
-                }
-
                 if (next == nextShortcode)
                 {
+                    var text = TakeText(_pos, next);
+                    if (text.Length > 0)
+                    {
+                        nodes.Add(new TextNode(text));
+                    }
                     var close = _source.IndexOf("]}", next + 2, StringComparison.Ordinal);
                     if (close == -1)
                     {
@@ -272,7 +333,9 @@ public class LavaTemplate
                     {
                         throw new LavaException("Unclosed output braces: found \"{{\" without a matching \"}}\".");
                     }
-                    var content = _source[(next + 2)..close].Trim();
+                    var (content, trimBefore, trimAfter) = ExtractMarkerContent(next + 2, close);
+                    AddTextBeforeMarker(nodes, next, trimBefore);
+                    _trimNextLeading = trimAfter;
                     if (content.Length == 0)
                     {
                         throw new LavaException("Empty output braces: \"{{ }}\" has nothing to render.");
@@ -287,7 +350,9 @@ public class LavaTemplate
                     {
                         throw new LavaException("Unclosed tag: found \"{%\" without a matching \"%}\".");
                     }
-                    var content = _source[(next + 2)..close].Trim();
+                    var (content, trimBefore, trimAfter) = ExtractMarkerContent(next + 2, close);
+                    AddTextBeforeMarker(nodes, next, trimBefore);
+                    _trimNextLeading = trimAfter;
                     _pos = close + 2;
 
                     var tagName = FirstWord(content);
@@ -768,10 +833,7 @@ public class LavaTemplate
 
     private class EntityCommandNode : Node
     {
-        public static readonly HashSet<string> SupportedEntities = new(StringComparer.OrdinalIgnoreCase)
-        {
-            "person", "business", "group", "groupmember", "campus", "definedvalue", "contentchannelitem",
-        };
+        public static HashSet<string> SupportedEntities => LavaCapabilities.EntityCommands;
 
         private readonly string _entity;
         private readonly Dictionary<string, string> _params;

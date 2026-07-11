@@ -99,7 +99,7 @@ async function runRender(source: string) {
 
 async function runLint(source: string) {
   try {
-    const result = await lintTemplate(source)
+    const result = await lintTemplate(source, engine.value)
     linterUp.value = true
     issues.value = result.issues
   } catch {
@@ -129,6 +129,7 @@ function setEngine(next: Engine) {
   engine.value = next
   localStorage.setItem('engine', next)
   void runRender(template.value)
+  void runLint(template.value)
 }
 
 function onRockStatus(status: RockStatus) {
@@ -169,10 +170,11 @@ async function checkLesson() {
     check,
     passed:
       check.type === 'template-includes'
-        ? template.value.includes(check.value)
+        // Case-insensitive: the engine accepts | possessive as well as | Possessive.
+        ? template.value.toLowerCase().includes(check.value.toLowerCase())
         : check.type === 'output-includes'
           ? rendered.includes(check.value)
-          : new RegExp(check.value, 's').test(rendered),
+          : new RegExp(check.value, 'is').test(rendered),
   }))
   if (checkResults.value.every((r) => r.passed)) {
     completed.value.add(lesson.id)
@@ -191,6 +193,7 @@ onMounted(async () => {
     if (rock.value.connected && localStorage.getItem('engine') !== 'local') {
       engine.value = 'rock'
       void runRender(template.value)
+      void runLint(template.value)
     }
     filters.value = await fetchFilters()
     contextJson.value = JSON.stringify(await fetchSampleContext(), null, 2)

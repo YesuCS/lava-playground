@@ -29,6 +29,10 @@ public static class Shortcodes
 
     public static IEnumerable<string> AllNames => BlockNames.Concat(InlineNames);
 
+    public static IEnumerable<string> BlockShortcodeNames => BlockNames;
+
+    public static IEnumerable<string> InlineShortcodeNames => InlineNames;
+
     /// <summary>
     /// Pulls [[ item ... ]] ... [[ enditem ]] child blocks out of a raw
     /// shortcode body, returning the remaining body and the items.

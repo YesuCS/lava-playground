@@ -19,7 +19,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self' http://127.0.0.1:5133 http://127.0.0.1:8000 https://api.github.com"
+      "csp": null
     }
   },
   "bundle": {

@@ -84,6 +84,20 @@ const playgroundTemplate = ref(DEFAULT_TEMPLATE)
 const engineLabel = computed(() =>
   engine.value === 'rock' && rock.value.connected ? `rock: ${rock.value.baseUrl}` : 'local engine')
 
+// Rock output can include <script> (charts and other shortcodes) and
+// root-relative asset URLs (/Scripts/..., /GetImage.ashx...). Plain v-html
+// neither runs scripts nor resolves those against the Rock server, so charts
+// come out blank. For remote output — or anything containing a script — we
+// render into a sandboxed iframe with a <base> pointing at the Rock server,
+// so it behaves just like a real Rock page (scripts run, assets load).
+const outputHasScript = computed(() => /<script[\s>]/i.test(output.value))
+const useFrame = computed(() => engine.value === 'rock' || outputHasScript.value)
+const previewDoc = computed(() => {
+  const base =
+    engine.value === 'rock' && rock.value.baseUrl ? `<base href="${rock.value.baseUrl}/">` : ''
+  return `<!doctype html><html><head><meta charset="utf-8">${base}<style>html,body{margin:0}body{font-family:-apple-system,system-ui,sans-serif;padding:1rem;color:#1a1a1a;background:#fff}</style></head><body>${output.value}</body></html>`
+})
+
 async function runRender(source: string) {
   try {
     const result = await renderTemplate(source, engine.value)
@@ -259,6 +273,12 @@ onMounted(async () => {
         <span class="meta" v-if="!renderError">{{ elapsedMs.toFixed(1) }} ms</span>
       </div>
       <div v-if="renderError" class="preview error-view">{{ renderError }}</div>
+      <iframe
+        v-else-if="previewTab === 'rendered' && useFrame"
+        class="preview preview-frame"
+        sandbox="allow-scripts"
+        :srcdoc="previewDoc"
+      ></iframe>
       <!-- eslint-disable-next-line vue/no-v-html — rendering the user's own template output is the point -->
       <div v-else-if="previewTab === 'rendered'" class="preview" v-html="output"></div>
       <div v-else class="preview raw">{{ output }}</div>

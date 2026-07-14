@@ -31,6 +31,20 @@ the sidecar's memory — nothing is written to disk.
 You can also auto-connect on launch by setting `ROCK_BASE_URL` (+ `ROCK_API_KEY`
 or `ROCK_USERNAME`/`ROCK_PASSWORD`) in the environment before starting the app.
 
+Notes on remote rendering:
+
+- **Charts and script-driven shortcodes render for real.** In Rock mode the
+  Rendered preview runs inside a sandboxed `<iframe>` with a `<base>` pointing
+  at your Rock server, so `{[ chart ]}` output (which loads Chart.js from Rock)
+  and other `<script>`-based shortcodes actually draw, and relative asset URLs
+  resolve. The iframe is `sandbox="allow-scripts"` only, so it can't touch the
+  app or your sidecars.
+- **Use `CurrentPerson`, not `Person`.** Rock's `RenderTemplate` API renders
+  without a page context, so `{{ Person.NickName }}` is empty but
+  `{{ CurrentPerson.NickName }}` (the logged-in user) is populated. Entity
+  commands (`{% person %}`, `{% group %}`, `{% sql %}`, `{% calendarevents %}`)
+  work because they query the database directly.
+
 ## Updates (check & notify)
 
 On launch the app asks GitHub for the latest commit on `main` and compares it

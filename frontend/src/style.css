@@ -119,6 +119,13 @@ body {
   color: #1a1a1a;
 }
 
+.preview-frame {
+  border: none;
+  width: 100%;
+  padding: 0;
+  background: white;
+}
+
 .preview.raw {
   background: var(--bg-panel-alt);
   color: var(--text);

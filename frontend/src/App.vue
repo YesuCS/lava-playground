@@ -5,6 +5,7 @@ import LintPanel from './components/LintPanel.vue'
 import FilterReference from './components/FilterReference.vue'
 import LearnPanel from './components/LearnPanel.vue'
 import RockConnectPanel from './components/RockConnectPanel.vue'
+import UpdateBanner from './components/UpdateBanner.vue'
 import { LESSONS, type Lesson, type LessonCheck } from './lessons'
 import {
   debounce,
@@ -184,26 +185,34 @@ async function checkLesson() {
 }
 
 onMounted(async () => {
+  // In the packaged desktop app the render + lint backends are sidecar
+  // processes that may still be starting up, so retry the initial load until
+  // both answer (or give up after ~30s). On the web build they're already up,
+  // so this succeeds on the first pass.
+  for (let attempt = 0; attempt < 60; attempt++) {
+    try {
+      rock.value = await rockStatus()
+      filters.value = await fetchFilters()
+      contextJson.value = JSON.stringify(await fetchSampleContext(), null, 2)
+      await lintTemplate('', 'local') // readiness probe for the (slower) linter
+      break
+    } catch {
+      await new Promise((resolve) => setTimeout(resolve, 500))
+    }
+  }
+
+  // Remote-first: when a Rock connection is live (e.g. auto-connected via
+  // ROCK_BASE_URL env vars), default to it unless the user chose local.
+  if (rock.value.connected && localStorage.getItem('engine') !== 'local') {
+    engine.value = 'rock'
+  }
   void runRender(template.value)
   void runLint(template.value)
-  try {
-    rock.value = await rockStatus()
-    // Remote-first: when a Rock connection is live (e.g. auto-connected via
-    // ROCK_BASE_URL env vars), default to it unless the user chose local.
-    if (rock.value.connected && localStorage.getItem('engine') !== 'local') {
-      engine.value = 'rock'
-      void runRender(template.value)
-      void runLint(template.value)
-    }
-    filters.value = await fetchFilters()
-    contextJson.value = JSON.stringify(await fetchSampleContext(), null, 2)
-  } catch {
-    // Status dots already reflect availability.
-  }
 })
 </script>
 
 <template>
+  <UpdateBanner />
   <header class="topbar">
     <h1>🌋 Lava Playground</h1>
     <div class="tab-buttons">

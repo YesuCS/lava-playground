@@ -14,20 +14,45 @@ builder.Services.AddCors(options =>
 var app = builder.Build();
 app.UseCors();
 
+// When packaged in the desktop app, exit if the host app goes away so we don't
+// leave an orphaned server holding the port (covers force-quit and crashes).
+if (int.TryParse(Environment.GetEnvironmentVariable("LAVA_HOST_PID"), out var hostPid))
+{
+    _ = Task.Run(async () =>
+    {
+        while (true)
+        {
+            try { Process.GetProcessById(hostPid).Dispose(); }
+            catch { Environment.Exit(0); }
+            await Task.Delay(1000);
+        }
+    });
+}
+
 var filters = LavaFilterRegistry.CreateDefault();
 
-var sampleContextJson = File.ReadAllText(
-    Path.Combine(AppContext.BaseDirectory, "SampleData", "sample-context.json"));
+// Loaded from embedded resources so they work whether the app runs from a
+// build output folder or as a single-file self-contained binary (desktop app).
+var sampleContextJson = ReadEmbeddedJson("sample-context.json");
 var sampleContextElement = JsonDocument.Parse(sampleContextJson).RootElement;
 
 // The sample "database" that entity command tags ({% person %}, {% group %}, ...) query.
-var entityDataJson = File.ReadAllText(
-    Path.Combine(AppContext.BaseDirectory, "SampleData", "sample-entities.json"));
+var entityDataJson = ReadEmbeddedJson("sample-entities.json");
 var entityData = JsonObjectConverter.ToDictionary(JsonDocument.Parse(entityDataJson).RootElement)
     .ToDictionary(
         kv => kv.Key,
         kv => (kv.Value as List<object?>) ?? new List<object?>(),
         StringComparer.OrdinalIgnoreCase);
+
+static string ReadEmbeddedJson(string fileName)
+{
+    var assembly = typeof(Program).Assembly;
+    var resourceName = assembly.GetManifestResourceNames()
+        .First(name => name.EndsWith(fileName, StringComparison.OrdinalIgnoreCase));
+    using var stream = assembly.GetManifestResourceStream(resourceName)!;
+    using var reader = new StreamReader(stream);
+    return reader.ReadToEnd();
+}
 
 // Optional: auto-connect to a Rock server at startup so remote mode
 // survives backend restarts. Set via environment variables:

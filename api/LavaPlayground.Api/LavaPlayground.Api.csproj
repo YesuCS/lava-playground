@@ -7,8 +7,11 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <Content Update="SampleData\sample-context.json" CopyToOutputDirectory="PreserveNewest" />
-    <Content Update="SampleData\sample-entities.json" CopyToOutputDirectory="PreserveNewest" />
+    <!-- Embedded (not copied) so the sample data travels inside the single-file
+         self-contained binary used by the desktop app, with no side files.
+         Read back via reflection in Program.cs. -->
+    <EmbeddedResource Include="SampleData\sample-context.json" />
+    <EmbeddedResource Include="SampleData\sample-entities.json" />
   </ItemGroup>
 
 </Project>
